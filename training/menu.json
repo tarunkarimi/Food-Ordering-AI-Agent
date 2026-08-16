@@ -1,0 +1,690 @@
+{
+  "theme": {
+    "layout": "LIST",
+    "displayMenuImages": true
+  },
+  "categories": [
+    {
+      "id": "todaysSpecial",
+      "title": "Today's Special"
+    },
+    {
+      "id": "bestSeller",
+      "title": "Best Seller"
+    },
+    {
+      "id": "recommended",
+      "title": "Recommended"
+    },
+    {
+      "id": "d2e6fb39-6c58-4b12-b673-492530333af9",
+      "title": "Main Course"
+    },
+    {
+      "id": "91dd8f20-1b11-43a2-95dd-ea4b9acd856d",
+      "title": "Breakfast"
+    },
+    {
+      "id": "492bcc13-211f-412b-a66f-0729101bd80c",
+      "title": "Tea & Coffee"
+    },
+    {
+      "id": "27e231eb-0ac6-49e9-be8d-850757362d5c",
+      "title": "Rice"
+    },
+    {
+      "id": "00cd6e9e-d93e-4062-9a6c-54a028855854",
+      "title": "Deserts"
+    }
+  ],
+  "items": [
+    {
+      "category": {
+        "id": "todaysSpecial",
+        "title": "Today's Special"
+      },
+      "items": [
+        {
+          "id": "d352577d-5eb1-40db-9a43-102325de1eb8",
+          "title": "Paneer Butter Masala",
+          "isVariant": false,
+          "basePrice": 320,
+          "variations": [],
+          "isTodaysSpecial": true,
+          "isCustomizable": false,
+          "customizations": [],
+          "ingredients": [],
+          "allergens": [],
+          "description": "Delicious creamy and full of butter this paneer butter masala will make you fall in love with the dish.",
+          "image": {
+            "url": "https://d1y00t4irb8soq.cloudfront.net/uploads/images-2-9c8e19ba-c421-4d44-bcdf-dbd90c3540d7.jpeg"
+          },
+          "isBestSeller": false,
+          "isRecommended": false,
+          "isChefSpecial": false,
+          "diet": "VEG",
+          "availability": {
+            "isAvailable": true
+          }
+        }
+      ]
+    },
+    {
+      "category": {
+        "id": "bestSeller",
+        "title": "Best Seller"
+      },
+      "items": [
+        {
+          "id": "0e2c5969-c73e-440a-9444-557b2fab9206",
+          "title": "Ras Malai",
+          "isVariant": false,
+          "basePrice": 90,
+          "variations": [],
+          "isTodaysSpecial": false,
+          "isCustomizable": false,
+          "customizations": [],
+          "ingredients": [],
+          "allergens": [],
+          "description": "Ras Malai – A rich and creamy Indian dessert featuring soft paneer dumplings soaked in sweet, saffron-infused milk, garnished with nuts and cardamom. A melt-in-the-mouth delight!",
+          "image": {
+            "url": "https://d1y00t4irb8soq.cloudfront.net/uploads/rasmalai-595ef6e1-de4d-454d-ac7b-3af5c8040112.jpg"
+          },
+          "isBestSeller": true,
+          "isRecommended": false,
+          "isChefSpecial": false,
+          "diet": "VEG",
+          "availability": {
+            "isAvailable": true
+          }
+        }
+      ]
+    },
+    {
+      "category": {
+        "id": "recommended",
+        "title": "Recommended"
+      },
+      "items": [
+        {
+          "id": "5ff2a047-aeee-4c48-b83d-5f70af7835b5",
+          "title": "Veg Biryani",
+          "isVariant": true,
+          "basePrice": null,
+          "variations": [
+            {
+              "id": "5bbe40d1-8d8f-49da-8e11-f02124f08811",
+              "name": "Full",
+              "price": 280
+            },
+            {
+              "id": "56c1852a-3384-4c55-bc4f-b96aebec623f",
+              "name": "Half",
+              "price": 150
+            }
+          ],
+          "isTodaysSpecial": false,
+          "isCustomizable": false,
+          "customizations": [],
+          "ingredients": [],
+          "allergens": [],
+          "description": "Aromatic basmati rice layered with a medley of fresh vegetables, fragrant spices, and a hint of mint and saffron. A flavorful vegetarian delight.",
+          "image": {
+            "url": "https://d1y00t4irb8soq.cloudfront.net/uploads/images-6383e3c9-ea91-4fd4-abaf-f4c70a993d97.jpeg"
+          },
+          "isBestSeller": false,
+          "isRecommended": true,
+          "isChefSpecial": false,
+          "diet": "VEG",
+          "availability": {
+            "isAvailable": true
+          }
+        },
+        {
+          "id": "a565c5db-cb91-4f33-ae0f-1bdcb91a44b7",
+          "title": "Dal Bhaat",
+          "isVariant": false,
+          "basePrice": 120,
+          "variations": [],
+          "isTodaysSpecial": false,
+          "isCustomizable": false,
+          "customizations": [],
+          "ingredients": [],
+          "allergens": [],
+          "description": "A quintessential Indian comfort meal featuring flavorful lentil soup (dal) served with steamed rice (bhaat). A simple yet satisfying everyday choice across many Indian households.",
+          "image": {
+            "url": "https://d1y00t4irb8soq.cloudfront.net/uploads/1*G85-653ZWXWGoHC3gPAVIQ-bd97e54b-4222-457d-9b8b-77b9d7393097.jpg"
+          },
+          "isBestSeller": false,
+          "isRecommended": true,
+          "isChefSpecial": false,
+          "diet": "VEG",
+          "availability": {
+            "isAvailable": true
+          }
+        }
+      ]
+    },
+    {
+      "category": {
+        "id": "d2e6fb39-6c58-4b12-b673-492530333af9",
+        "title": "Main Course"
+      },
+      "items": [
+        {
+          "id": "f7e1be59-a4f6-4497-854c-d21fbba8bd83",
+          "title": "Veg Kolhapuri",
+          "isVariant": true,
+          "basePrice": null,
+          "variations": [
+            {
+              "id": "68bf5e5c-e3fd-4777-92da-04058cace8c7",
+              "name": "Full",
+              "price": 290
+            },
+            {
+              "id": "a7eb2f4f-ad08-458f-87a1-b92cb300b83c",
+              "name": "Half",
+              "price": 160
+            }
+          ],
+          "isTodaysSpecial": false,
+          "isCustomizable": false,
+          "customizations": [],
+          "ingredients": [],
+          "allergens": [],
+          "description": "A fiery and flavorful vegetarian curry hailing from the Kolhapur region of Maharashtra. A medley of vegetables cooked in a robust and spicy coconut-based gravy, tempered with unique Kolhapuri spices.",
+          "image": {
+            "url": "https://d1y00t4irb8soq.cloudfront.net/uploads/1-1669465240Vegkolhapurirecipe-d9ed43f5-8679-402c-96ea-515b75063c04.webp"
+          },
+          "isBestSeller": false,
+          "isRecommended": false,
+          "isChefSpecial": false,
+          "diet": "VEG",
+          "availability": {
+            "isAvailable": true
+          }
+        },
+        {
+          "id": "413e5deb-cfeb-4ab2-be1c-a641be20a011",
+          "title": "Bhindi Do Pyaza",
+          "isVariant": false,
+          "basePrice": 140,
+          "variations": [],
+          "isTodaysSpecial": false,
+          "isCustomizable": false,
+          "customizations": [],
+          "ingredients": [],
+          "allergens": [],
+          "description": "A delightful preparation of okra (bhindi) where it's cooked with both caramelized and crunchy onions, creating a wonderful textural contrast and a subtly sweet and savory flavor, enhanced by aromatic Indian spices.",
+          "image": {
+            "url": "https://d1y00t4irb8soq.cloudfront.net/uploads/Bhindi-Do-Pyaza-Recipe-65688498-83de-4889-b593-993e6d5f9df9.jpg"
+          },
+          "isBestSeller": false,
+          "isRecommended": false,
+          "isChefSpecial": false,
+          "diet": "VEG",
+          "availability": {
+            "isAvailable": true
+          }
+        },
+        {
+          "id": "a7d4413b-6205-4386-9038-9d544f00923b",
+          "title": "Veg Nargisi Kofta",
+          "isVariant": true,
+          "basePrice": null,
+          "variations": [
+            {
+              "id": "b6150f44-adc2-4752-9783-6389e2deb55e",
+              "name": "Full",
+              "price": 340
+            },
+            {
+              "id": "4bc3dc1a-9951-446f-8e90-b02f117827bb",
+              "name": "Half",
+              "price": 190
+            }
+          ],
+          "isTodaysSpecial": false,
+          "isCustomizable": false,
+          "customizations": [],
+          "ingredients": [],
+          "allergens": [],
+          "description": "Vegetable and paneer dumplings and veggies coated with a layer of spiced mashed vegetables and paneer, resembling a \"Nargis\" (daffodil) due to its layered appearance. Served in a rich and creamy tomato-based gravy. A unique vegetarian delight.",
+          "image": {
+            "url": "https://d1y00t4irb8soq.cloudfront.net/uploads/images-3-1ae0d3b4-5bf0-4fb5-887f-f0b6953d49b1.jpeg"
+          },
+          "isBestSeller": false,
+          "isRecommended": false,
+          "isChefSpecial": false,
+          "diet": "VEG",
+          "availability": {
+            "isAvailable": true
+          }
+        },
+        {
+          "id": "d352577d-5eb1-40db-9a43-102325de1eb8",
+          "title": "Paneer Butter Masala",
+          "isVariant": false,
+          "basePrice": 320,
+          "variations": [],
+          "isTodaysSpecial": true,
+          "isCustomizable": false,
+          "customizations": [],
+          "ingredients": [],
+          "allergens": [],
+          "description": "Delicious creamy and full of butter this paneer butter masala will make you fall in love with the dish.",
+          "image": {
+            "url": "https://d1y00t4irb8soq.cloudfront.net/uploads/images-2-9c8e19ba-c421-4d44-bcdf-dbd90c3540d7.jpeg"
+          },
+          "isBestSeller": false,
+          "isRecommended": false,
+          "isChefSpecial": false,
+          "diet": "VEG",
+          "availability": {
+            "isAvailable": true
+          }
+        },
+        {
+          "id": "e4fc6950-933e-453c-a78f-cfeaf35a4f8f",
+          "title": "Mushroom Masala",
+          "isVariant": false,
+          "basePrice": 170,
+          "variations": [],
+          "isTodaysSpecial": false,
+          "isCustomizable": false,
+          "customizations": [],
+          "ingredients": [],
+          "allergens": [],
+          "description": "Tender mushrooms cooked in a flavorful and aromatic onion-tomato based gravy with a blend of traditional Indian spices. A savory vegetarian delight.",
+          "image": {
+            "url": "https://d1y00t4irb8soq.cloudfront.net/media/be672d89-cc78-4005-bc4b-12355032316a.webp"
+          },
+          "isBestSeller": false,
+          "isRecommended": false,
+          "isChefSpecial": false,
+          "diet": "VEG",
+          "availability": {
+            "isAvailable": true
+          }
+        }
+      ]
+    },
+    {
+      "category": {
+        "id": "91dd8f20-1b11-43a2-95dd-ea4b9acd856d",
+        "title": "Breakfast"
+      },
+      "items": [
+        {
+          "id": "994f1668-c9d5-478b-9a0b-cd887f5ebd93",
+          "title": "Puri Aaloo",
+          "isVariant": false,
+          "basePrice": 120,
+          "variations": [],
+          "isTodaysSpecial": false,
+          "isCustomizable": false,
+          "customizations": [],
+          "ingredients": [],
+          "allergens": [],
+          "description": "Puri Aloo – A classic Indian dish featuring crispy, golden-fried puris served with flavorful, spiced potato curry. A comforting and delicious meal enjoyed any time of the day!",
+          "image": {
+            "url": "https://d1y00t4irb8soq.cloudfront.net/uploads/aloo-puri-a8ceb6cb-eb7c-4683-a496-ed7b5cdba4ae.jpg"
+          },
+          "isBestSeller": false,
+          "isRecommended": false,
+          "isChefSpecial": false,
+          "diet": "VEG",
+          "availability": {
+            "isAvailable": true
+          }
+        },
+        {
+          "id": "4651da72-2881-4faf-a014-99856cbb1d95",
+          "title": "Masala Dosa",
+          "isVariant": false,
+          "basePrice": 140,
+          "variations": [],
+          "isTodaysSpecial": false,
+          "isCustomizable": false,
+          "customizations": [],
+          "ingredients": [],
+          "allergens": [],
+          "description": "Masala Dosa – A crispy, golden South Indian rice crepe filled with a spiced potato masala, served with coconut chutney and sambar. A perfect blend of crunch and flavor!",
+          "image": {
+            "url": "https://d1y00t4irb8soq.cloudfront.net/uploads/masala-dosa-e39914d6-a47c-4567-bedc-147b3e4e6ddf.webp"
+          },
+          "isBestSeller": false,
+          "isRecommended": false,
+          "isChefSpecial": false,
+          "diet": "VEG",
+          "availability": {
+            "isAvailable": true
+          }
+        },
+        {
+          "id": "255dd5c8-8eb2-42b3-be5e-90c4e1ac3def",
+          "title": "Idli Sambhar",
+          "isVariant": false,
+          "basePrice": 90,
+          "variations": [],
+          "isTodaysSpecial": false,
+          "isCustomizable": false,
+          "customizations": [],
+          "ingredients": [],
+          "allergens": [],
+          "description": null,
+          "image": {
+            "url": "https://d1y00t4irb8soq.cloudfront.net/uploads/idli-ab749c3c-7f56-4fcd-81e2-7b2255b1afaf.jpeg"
+          },
+          "isBestSeller": false,
+          "isRecommended": false,
+          "isChefSpecial": false,
+          "diet": "VEG",
+          "availability": {
+            "isAvailable": true
+          }
+        },
+        {
+          "id": "53b6910b-eab8-40fb-a587-b9de501c01aa",
+          "title": "Poha Jalebi",
+          "isVariant": false,
+          "basePrice": 60,
+          "variations": [],
+          "isTodaysSpecial": false,
+          "isCustomizable": false,
+          "customizations": [],
+          "ingredients": [],
+          "allergens": [],
+          "description": "Poha – A light and fluffy flattened rice dish cooked with onions, mustard seeds, turmeric, and green chilies, garnished with fresh coriander and lemon. A healthy and flavorful breakfast favorite!",
+          "image": {
+            "url": "https://d1y00t4irb8soq.cloudfront.net/uploads/poha-8088fb1f-c828-4db6-8d06-bc4593e647f2.jpeg"
+          },
+          "isBestSeller": false,
+          "isRecommended": false,
+          "isChefSpecial": false,
+          "diet": "VEG",
+          "availability": {
+            "isAvailable": true
+          }
+        }
+      ]
+    },
+    {
+      "category": {
+        "id": "492bcc13-211f-412b-a66f-0729101bd80c",
+        "title": "Tea & Coffee"
+      },
+      "items": [
+        {
+          "id": "701fc418-a9eb-481d-a54f-de7979f9fcfa",
+          "title": "Masala Chai",
+          "isVariant": false,
+          "basePrice": 30,
+          "variations": [],
+          "isTodaysSpecial": false,
+          "isCustomizable": false,
+          "customizations": [],
+          "ingredients": [],
+          "allergens": [],
+          "description": "Masala Chai – A rich and aromatic Indian tea brewed with black tea leaves, milk, and a blend of warming spices like cardamom, ginger, and cloves. A perfect comforting drink!",
+          "image": {
+            "url": "https://d1y00t4irb8soq.cloudfront.net/uploads/chai-0fe92d21-4ee2-4b95-9bc3-5dab1989429e.jpeg"
+          },
+          "isBestSeller": false,
+          "isRecommended": false,
+          "isChefSpecial": false,
+          "diet": "VEG",
+          "availability": {
+            "isAvailable": true
+          }
+        },
+        {
+          "id": "a63dd6b6-91b9-4970-9e1a-265fb2570945",
+          "title": "Filter Coffee (South Indian Coffee)",
+          "isVariant": false,
+          "basePrice": 60,
+          "variations": [],
+          "isTodaysSpecial": false,
+          "isCustomizable": false,
+          "customizations": [],
+          "ingredients": [],
+          "allergens": [],
+          "description": "A traditional South Indian delight. Aromatic coffee decoction blended with hot milk and a touch of sweetness. A local favorite.",
+          "image": {
+            "url": "https://d1y00t4irb8soq.cloudfront.net/uploads/kaipunnyam-filter-coffee-e6339ed2-bd5a-429b-8b2c-e89087622ab1.jpg"
+          },
+          "isBestSeller": false,
+          "isRecommended": false,
+          "isChefSpecial": false,
+          "diet": "VEG",
+          "availability": {
+            "isAvailable": true
+          }
+        },
+        {
+          "id": "f2994672-e1e9-4b78-927f-23c51d49fea2",
+          "title": "Iced Latte",
+          "isVariant": false,
+          "basePrice": 140,
+          "variations": [],
+          "isTodaysSpecial": false,
+          "isCustomizable": false,
+          "customizations": [],
+          "ingredients": [],
+          "allergens": [],
+          "description": "A refreshing blend of rich espresso and chilled milk, served over ice for a cool and invigorating coffee experience.",
+          "image": {
+            "url": "https://d1y00t4irb8soq.cloudfront.net/uploads/blueberry-iced-latte-500x500-9118c9d9-5a32-4473-b2e2-fe1fa2e07988.jpg"
+          },
+          "isBestSeller": false,
+          "isRecommended": false,
+          "isChefSpecial": false,
+          "diet": "VEG",
+          "availability": {
+            "isAvailable": true
+          }
+        },
+        {
+          "id": "65a793a2-2126-4793-9606-afe777d05648",
+          "title": "Americano",
+          "isVariant": false,
+          "basePrice": 140,
+          "variations": [],
+          "isTodaysSpecial": false,
+          "isCustomizable": false,
+          "customizations": [],
+          "ingredients": [],
+          "allergens": [],
+          "description": "Bold espresso mellowed with hot water, offering a robust and satisfying black coffee experience.",
+          "image": {
+            "url": "https://d1y00t4irb8soq.cloudfront.net/uploads/522979505-shutterstock_1973536-3a3b11cc-82f8-4f8b-922c-aa6d78471db1.jpg"
+          },
+          "isBestSeller": false,
+          "isRecommended": false,
+          "isChefSpecial": false,
+          "diet": "VEG",
+          "availability": {
+            "isAvailable": true
+          }
+        },
+        {
+          "id": "a15fa07e-ce08-4081-9be7-b3f9f7e0914d",
+          "title": "Cappuccino",
+          "isVariant": false,
+          "basePrice": 150,
+          "variations": [],
+          "isTodaysSpecial": false,
+          "isCustomizable": false,
+          "customizations": [],
+          "ingredients": [],
+          "allergens": [],
+          "description": "A harmonious blend of rich espresso, velvety steamed milk, and a cloud of frothy foam.",
+          "image": {
+            "url": "https://d1y00t4irb8soq.cloudfront.net/uploads/picture-0c537572-c578-4d71-8350-73fe8deca8b3.jpg"
+          },
+          "isBestSeller": false,
+          "isRecommended": false,
+          "isChefSpecial": false,
+          "diet": "VEG",
+          "availability": {
+            "isAvailable": true
+          }
+        }
+      ]
+    },
+    {
+      "category": {
+        "id": "27e231eb-0ac6-49e9-be8d-850757362d5c",
+        "title": "Rice"
+      },
+      "items": [
+        {
+          "id": "9e43b13c-e068-48e8-a8bf-9159fc59fb76",
+          "title": "Jeera Rice",
+          "isVariant": true,
+          "basePrice": null,
+          "variations": [
+            {
+              "id": "189c4215-b412-46c8-8aab-3f01819357f8",
+              "name": "Full",
+              "price": 180
+            },
+            {
+              "id": "82e4f31c-6bb8-4d0c-9331-82bb8edc1f8f",
+              "name": "Half",
+              "price": 90
+            }
+          ],
+          "isTodaysSpecial": false,
+          "isCustomizable": false,
+          "customizations": [],
+          "ingredients": [],
+          "allergens": [],
+          "description": null,
+          "image": {
+            "url": "https://d1y00t4irb8soq.cloudfront.net/uploads/Jeera-_rice_Restaurant@palates-46d0d500-6fc1-4a52-8c19-e043fa00f77d.jpg"
+          },
+          "isBestSeller": false,
+          "isRecommended": false,
+          "isChefSpecial": false,
+          "diet": "VEG",
+          "availability": {
+            "isAvailable": true
+          }
+        },
+        {
+          "id": "5ff2a047-aeee-4c48-b83d-5f70af7835b5",
+          "title": "Veg Biryani",
+          "isVariant": true,
+          "basePrice": null,
+          "variations": [
+            {
+              "id": "5bbe40d1-8d8f-49da-8e11-f02124f08811",
+              "name": "Full",
+              "price": 280
+            },
+            {
+              "id": "56c1852a-3384-4c55-bc4f-b96aebec623f",
+              "name": "Half",
+              "price": 150
+            }
+          ],
+          "isTodaysSpecial": false,
+          "isCustomizable": false,
+          "customizations": [],
+          "ingredients": [],
+          "allergens": [],
+          "description": "Aromatic basmati rice layered with a medley of fresh vegetables, fragrant spices, and a hint of mint and saffron. A flavorful vegetarian delight.",
+          "image": {
+            "url": "https://d1y00t4irb8soq.cloudfront.net/uploads/images-6383e3c9-ea91-4fd4-abaf-f4c70a993d97.jpeg"
+          },
+          "isBestSeller": false,
+          "isRecommended": true,
+          "isChefSpecial": false,
+          "diet": "VEG",
+          "availability": {
+            "isAvailable": true
+          }
+        },
+        {
+          "id": "a565c5db-cb91-4f33-ae0f-1bdcb91a44b7",
+          "title": "Dal Bhaat",
+          "isVariant": false,
+          "basePrice": 120,
+          "variations": [],
+          "isTodaysSpecial": false,
+          "isCustomizable": false,
+          "customizations": [],
+          "ingredients": [],
+          "allergens": [],
+          "description": "A quintessential Indian comfort meal featuring flavorful lentil soup (dal) served with steamed rice (bhaat). A simple yet satisfying everyday choice across many Indian households.",
+          "image": {
+            "url": "https://d1y00t4irb8soq.cloudfront.net/uploads/1*G85-653ZWXWGoHC3gPAVIQ-bd97e54b-4222-457d-9b8b-77b9d7393097.jpg"
+          },
+          "isBestSeller": false,
+          "isRecommended": true,
+          "isChefSpecial": false,
+          "diet": "VEG",
+          "availability": {
+            "isAvailable": true
+          }
+        }
+      ]
+    },
+    {
+      "category": {
+        "id": "00cd6e9e-d93e-4062-9a6c-54a028855854",
+        "title": "Deserts"
+      },
+      "items": [
+        {
+          "id": "0e2c5969-c73e-440a-9444-557b2fab9206",
+          "title": "Ras Malai",
+          "isVariant": false,
+          "basePrice": 90,
+          "variations": [],
+          "isTodaysSpecial": false,
+          "isCustomizable": false,
+          "customizations": [],
+          "ingredients": [],
+          "allergens": [],
+          "description": "Ras Malai – A rich and creamy Indian dessert featuring soft paneer dumplings soaked in sweet, saffron-infused milk, garnished with nuts and cardamom. A melt-in-the-mouth delight!",
+          "image": {
+            "url": "https://d1y00t4irb8soq.cloudfront.net/uploads/rasmalai-595ef6e1-de4d-454d-ac7b-3af5c8040112.jpg"
+          },
+          "isBestSeller": true,
+          "isRecommended": false,
+          "isChefSpecial": false,
+          "diet": "VEG",
+          "availability": {
+            "isAvailable": true
+          }
+        },
+        {
+          "id": "b28efb1f-8b92-4190-924c-c8fafd898ee4",
+          "title": "Gulab Jamun",
+          "isVariant": false,
+          "basePrice": 90,
+          "variations": [],
+          "isTodaysSpecial": false,
+          "isCustomizable": false,
+          "customizations": [],
+          "ingredients": [],
+          "allergens": [],
+          "description": "Soft and spongy milk-based dumplings, deep-fried to a golden brown and soaked in a fragrant sugar syrup infused with cardamom and rosewater. A classic Indian sweet.",
+          "image": {
+            "url": "https://d1y00t4irb8soq.cloudfront.net/uploads/gulab-jamun-d4cbbfae-5a45-4bcc-8679-9f6d2e42016d.jpg"
+          },
+          "isBestSeller": false,
+          "isRecommended": false,
+          "isChefSpecial": false,
+          "diet": "VEG",
+          "availability": {
+            "isAvailable": true
+          }
+        }
+      ]
+    }
+  ]
+}

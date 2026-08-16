@@ -1,4 +1,4 @@
-from pydantic_settings import SettingsConfigDict, BaseSettings
+﻿from pydantic_settings import SettingsConfigDict, BaseSettings
 
 
 class Config(BaseSettings):
@@ -9,3 +9,4 @@ class Config(BaseSettings):
 
 
 config = Config()
+

@@ -1,14 +1,14 @@
-from langchain_core.messages.ai import AIMessage
-from agents.state import OrderState, Cart
-from agents.prompts.system_prompt import SYSTEM_INSTRUCTION, WELCOME_MSG
+﻿from langchain_core.messages.ai import AIMessage
+from src.agents.state import OrderState, Cart
+from src.agents.prompts.system_prompt import SYSTEM_INSTRUCTION, WELCOME_MSG
 from langchain.chat_models import init_chat_model
-from agents.tools.cart import get_menu, get_cart, add_cart, remove_from_cart, place_order, confirm_order
+from src.agents.tools.cart import get_menu, get_cart, add_cart, remove_from_cart, place_order, confirm_order
 
 
 def chatbot(state: OrderState) -> OrderState:
     """The chatbot itself. A wrapper around the model's own chat interface."""
 
-    model = init_chat_model("gemini-2.5-flash", model_provider="google_genai")
+    model = init_chat_model("gemini-flash-latest", model_provider="google_genai")
     tools = [get_menu, get_cart, add_cart,
              remove_from_cart, place_order, confirm_order]
 
@@ -40,3 +40,4 @@ def chatbot(state: OrderState) -> OrderState:
         "orderId": state.get("orderId"),
         "finished": state.get("finished", False)
     }
+

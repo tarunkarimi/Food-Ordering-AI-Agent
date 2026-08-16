@@ -1,4 +1,4 @@
-# The system instruction defines how the chatbot is expected to behave and includes
+﻿# The system instruction defines how the chatbot is expected to behave and includes
 # rules for when to call different functions, as well as rules for the conversation, such
 # as tone and what is permitted for discussion.
 SYSTEM_INSTRUCTION = (
@@ -29,3 +29,4 @@ SYSTEM_INSTRUCTION = (
 
 # This is the message with which the system opens the conversation.
 WELCOME_MSG = "Welcome to the {restaurant_name}. Type `q` to quit. How may I serve you today?"
+

@@ -1,11 +1,11 @@
-from fastapi import FastAPI
+﻿from fastapi import FastAPI
 import uvicorn
 from fastapi.middleware.cors import CORSMiddleware
 from src.api.routes.chats import router as chat_router
 import logging
 from dotenv import load_dotenv
 import os
-from configs.config import config
+from src.configs.config import config
 
 load_dotenv()
 
@@ -52,3 +52,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

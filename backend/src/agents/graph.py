@@ -1,11 +1,11 @@
-# ------
+﻿# ------
 # This file contains the agent workflow graph created using LangGraph
 # ------
 
 from langgraph.graph import StateGraph, START
 from src.agents.state import OrderState
 from src.agents.nodes.chatbot import chatbot
-from agents.nodes.tool_node import tool_node
+from src.agents.nodes.tool_node import tool_node
 from langgraph.prebuilt import tools_condition
 from langgraph.checkpoint.memory import MemorySaver
 
@@ -29,3 +29,4 @@ def chatbot_agent_builder():
     chatbot_graph = graph.compile(checkpointer=memory)
 
     return chatbot_graph
+

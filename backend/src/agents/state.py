@@ -1,4 +1,4 @@
-# ----
+﻿# ----
 # This file contains the State of the agent
 # ----
 
@@ -59,3 +59,4 @@ class OrderState(TypedDict):
 
     # Flag indicating that the order is placed and completed.
     finished: bool
+

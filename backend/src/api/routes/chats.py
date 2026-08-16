@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+﻿from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 import json
 from pydantic import BaseModel
@@ -102,3 +102,4 @@ async def chat_order(request: ChatRequest):
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+

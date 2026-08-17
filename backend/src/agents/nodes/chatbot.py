@@ -10,6 +10,7 @@ from src.agents.tools.cart import (
     get_cart,
     add_cart,
     remove_from_cart,
+    clear_cart,
     place_order,
     confirm_order,
 )
@@ -28,6 +29,7 @@ def chatbot(state: OrderState) -> OrderState:
         get_cart,
         add_cart,
         remove_from_cart,
+        clear_cart,
         place_order,
         confirm_order,
     ]
@@ -64,5 +66,7 @@ def chatbot(state: OrderState) -> OrderState:
         "messages": state.get("messages", []) + [new_output],
         "cart": current_cart,
         "orderId": state.get("orderId"),
+        "restaurant_name": state["restaurant_name"],
+        "subdomain": state["subdomain"],
         "finished": state.get("finished", False),
     }

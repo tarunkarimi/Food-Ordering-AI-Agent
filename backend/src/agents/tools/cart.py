@@ -232,11 +232,22 @@ def remove_from_cart(item_id: str, title: str, new_item: CartItemUnit, tool_call
         ]
     })
 
-
 @tool
-def clear_cart(state: Annotated[OrderState, InjectedState]):
-    """Clears the entire cart and removes all the present items in the cart"""
-    return
+def clear_cart(
+    tool_call_id: Annotated[str, InjectedToolCallId],
+    state: Annotated[OrderState, InjectedState]
+):
+    """Clear all items from the customer's cart."""
+
+    return Command(update={
+        "cart": Cart(items=[]),
+        "messages": [
+            ToolMessage(
+                "Cart cleared successfully.",
+                tool_call_id=tool_call_id
+            )
+        ]
+    })
 
 
 @tool

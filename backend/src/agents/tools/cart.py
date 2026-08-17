@@ -280,28 +280,60 @@ def place_order(tool_call_id: Annotated[str, InjectedToolCallId], state: Annotat
             ]
         })
 
-    # TODO: Call the backend API to place the order which returns an orderId for the customer
-    # For now, we'll simulate with a mock order ID
-    import uuid
-    # Generate a short mock order ID
-    mock_order_id = "ZKS" + str(uuid.uuid4())[:8]
+    order_items = []
+    for cart_item in current_cart.items:
+        for unit in cart_item.units:
+            order_items.append({
+                "item_id": cart_item.item_id,
+                "title": cart_item.title,
+                "quantity": unit.quantity,
+                "base_price": unit.base_price,
+                "variation": unit.variation.model_dump() if unit.variation else None,
+            })
 
-    # Calculate total items for confirmation message
-    total_items = sum(sum(unit.quantity for unit in item.units)
-                      for item in current_cart.items)
+    order_url = f"{config.MENU_BACKEND_URL.rstrip('/')}/orders"
+    payload = {
+        "restaurant_name": state["restaurant_name"],
+        "subdomain": state["subdomain"],
+        "items": order_items,
+    }
 
-    # Clear the cart after placing order
-    empty_cart = Cart(items=[])
+    try:
+        response = requests.post(order_url, json=payload, timeout=10)
+        response.raise_for_status()
+        result = response.json()
+        order_id = result.get("order_id")
+        if not isinstance(order_id, str) or not order_id:
+            raise ValueError("Order API response did not include a valid order_id")
+    except requests.Timeout:
+        error_message = "Unable to place order: the ordering service timed out. Please try again."
+    except requests.ConnectionError:
+        error_message = "Unable to place order: the ordering service is unavailable. Please try again."
+    except requests.RequestException as exc:
+        error_message = f"Unable to place order: the ordering service returned an error ({exc})."
+    except (ValueError, TypeError):
+        error_message = "Unable to place order: the ordering service returned an invalid response."
+    else:
+        total_items = sum(item["quantity"] for item in order_items)
+        subtotal = result.get("subtotal", "unknown")
+        return Command(update={
+            "cart": Cart(items=[]),
+            "orderId": order_id,
+            "finished": True,
+            "messages": [
+                ToolMessage(
+                    f"Order {order_id} confirmed! Total: {subtotal}. "
+                    f"Total items: {total_items}. Thank you for your order!",
+                    tool_call_id=tool_call_id
+                )
+            ]
+        })
 
-    # Update state: clear cart, set orderId, and mark as finished
+    # On every API failure, deliberately omit cart/order state updates.
     return Command(update={
-        "cart": empty_cart,
-        "orderId": mock_order_id,
-        "finished": True,
         "messages": [
             ToolMessage(
-                f"Order placed successfully! Your order ID is {mock_order_id}. "
-                f"Total items: {total_items}. Thank you for your order!",
+                error_message,
                 tool_call_id=tool_call_id
             )
         ]

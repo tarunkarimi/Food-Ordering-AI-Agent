@@ -35,7 +35,7 @@ class CartItem(BaseModel):
 
 
 class Cart(BaseModel):
-    items: List[CartItem] = Field(default_factory=List)
+    items: List[CartItem] = Field(default_factory=list)
 
 
 class OrderState(TypedDict):

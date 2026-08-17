@@ -14,6 +14,7 @@ from src.agents.tools.cart import (
     place_order,
     confirm_order,
 )
+from src.agents.tools.order import get_order_status
 
 
 def chatbot(state: OrderState) -> OrderState:
@@ -32,6 +33,7 @@ def chatbot(state: OrderState) -> OrderState:
         clear_cart,
         place_order,
         confirm_order,
+        get_order_status,
     ]
 
     # Bind tools to Gemini

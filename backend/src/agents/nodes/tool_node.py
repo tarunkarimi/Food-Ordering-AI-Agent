@@ -13,6 +13,7 @@ from src.agents.tools.cart import (
     place_order,
     confirm_order,
 )
+from src.agents.tools.order import get_order_status
 
 
 tools = [
@@ -23,6 +24,7 @@ tools = [
     clear_cart,
     place_order,
     confirm_order,
+    get_order_status,
 ]
 
 # Use LangGraph's ToolNode for injection/validation, but execute one

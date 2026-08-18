@@ -73,3 +73,19 @@ def test_order_lookup_and_missing_order_lookup():
     created = client.post("/orders", json=valid_order()).json()
     assert client.get(f"/orders/{created['order_id']}").json() == created
     assert client.get("/orders/ORD-MISSING").status_code == 404
+
+
+def test_successful_cancellation_and_lookup_remains_available():
+    ORDERS.clear()
+    created = client.post("/orders", json=valid_order()).json()
+    cancelled = client.delete(f"/orders/{created['order_id']}")
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
+    assert client.get(f"/orders/{created['order_id']}").json()["status"] == "cancelled"
+
+
+def test_cancel_missing_or_already_cancelled_order():
+    assert client.delete("/orders/ORD-MISSING").status_code == 404
+    created = client.post("/orders", json=valid_order()).json()
+    assert client.delete(f"/orders/{created['order_id']}").status_code == 200
+    assert client.delete(f"/orders/{created['order_id']}").status_code == 400

@@ -13,7 +13,7 @@ from src.agents.tools.cart import (
     place_order,
     confirm_order,
 )
-from src.agents.tools.order import get_order_status
+from src.agents.tools.order import cancel_order, get_order_status
 
 
 tools = [
@@ -25,6 +25,7 @@ tools = [
     place_order,
     confirm_order,
     get_order_status,
+    cancel_order,
 ]
 
 # Use LangGraph's ToolNode for injection/validation, but execute one
@@ -39,14 +40,14 @@ def _apply_result(state: dict[str, Any], result: Any) -> list[Any]:
     if isinstance(result, Command):
         update = result.update or {}
         if isinstance(update, dict):
-            for key in ("cart", "orderId", "finished"):
+            for key in ("cart", "orderId", "order_status", "finished"):
                 if key in update:
                     state[key] = update[key]
             messages.extend(update.get("messages", []))
         return messages
 
     if isinstance(result, dict):
-        for key in ("cart", "orderId", "finished"):
+        for key in ("cart", "orderId", "order_status", "finished"):
             if key in result:
                 state[key] = result[key]
         messages.extend(result.get("messages", []))
@@ -102,5 +103,6 @@ def tool_node(state, config=None):
         "messages": new_tool_messages,
         "cart": working_state.get("cart"),
         "orderId": working_state.get("orderId"),
+        "order_status": working_state.get("order_status"),
         "finished": working_state.get("finished", False),
     }

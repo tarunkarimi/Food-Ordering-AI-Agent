@@ -150,3 +150,16 @@ def get_order(order_id: str):
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found")
     return order
+
+
+@app.delete("/orders/{order_id}")
+def cancel_order(order_id: str):
+    """Cancel an existing order while retaining it for later status lookup."""
+    order = ORDERS.get(order_id)
+    if order is None:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order["status"] == "cancelled":
+        raise HTTPException(status_code=400, detail="Order is already cancelled")
+
+    order["status"] = "cancelled"
+    return order

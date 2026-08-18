@@ -53,6 +53,9 @@ class OrderState(TypedDict):
 
     orderId: Optional[str]
 
+    # Lifecycle status for the most recent order (for example, confirmed or cancelled).
+    order_status: Optional[str]
+
     # tenant specific
     restaurant_name: str
     subdomain: str

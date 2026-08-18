@@ -19,6 +19,7 @@ def make_state(cart):
     return {
         "messages": [],
         "orderId": None,
+        "order_status": None,
         "restaurant_name": "Test Restaurant",
         "subdomain": "test",
         "cart": cart,

@@ -319,6 +319,7 @@ def place_order(tool_call_id: Annotated[str, InjectedToolCallId], state: Annotat
         return Command(update={
             "cart": Cart(items=[]),
             "orderId": order_id,
+            "order_status": result.get("status", "confirmed"),
             "finished": True,
             "messages": [
                 ToolMessage(

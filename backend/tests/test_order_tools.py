@@ -37,6 +37,7 @@ def test_successful_order_placement_clears_cart_and_sets_completion():
     post.assert_called_once()
     assert result["cart"].items == []
     assert result["orderId"] == "ORD-123"
+    assert result["order_status"] == "confirmed"
     assert result["finished"] is True
 
 

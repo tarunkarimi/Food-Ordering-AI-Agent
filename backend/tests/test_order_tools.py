@@ -12,9 +12,15 @@ def place(state):
 def response(status_code=201, payload=None):
     result = Mock()
     result.status_code = status_code
-    result.json.return_value = payload or {"order_id": "ORD-123", "subtotal": 440.0}
+    result.json.return_value = payload or {
+        "order_id": "ORD-123",
+        "subtotal": 440.0,
+        "status": "confirmed",
+    }
     result.raise_for_status.side_effect = (
-        requests.HTTPError(f"{status_code} error") if status_code >= 400 else None
+        requests.HTTPError(f"{status_code} error")
+        if status_code >= 400
+        else None
     )
     return result
 

@@ -1,4 +1,3 @@
-﻿from langchain_core.tools import tool
 import requests
 from src.configs.config import config
 from langchain_core.tools import tool, InjectedToolCallId
@@ -10,23 +9,60 @@ from src.agents.state import CartItemUnit, Cart, CartItem, OrderState
 from langgraph.prebuilt import InjectedState
 
 
-@tool
-def get_menu(state: Annotated[OrderState, InjectedState]):
-    """Provide the latest up-to-date menu."""
+def _menu_url(subdomain: str) -> str:
+    return f"{config.MENU_BACKEND_URL.rstrip('/')}/?subdomain={subdomain}"
 
-    # once you fetch the menu from backend service
-    # try to convert it into LLM readable format (if possible - check this case)
 
-    MENU_URL = f"{config.MENU_BACKEND_URL}?subdomain={state["subdomain"]}"
-
-    response = requests.get(MENU_URL)
-
-    if response.status_code == 200:
+def _fetch_menu_items(state: OrderState) -> tuple[list[dict], str | None]:
+    """Fetch and minimally validate the authoritative tenant menu."""
+    try:
+        response = requests.get(_menu_url(state["subdomain"]), timeout=10)
+        response.raise_for_status()
         menu = response.json()
-        items = menu['items']
-        return items
-    else:
-        print("Error fetching the menu")
+        if not isinstance(menu, dict) or not isinstance(menu.get("items"), list):
+            raise ValueError("Menu response is malformed")
+        items = menu["items"]
+        if not all(isinstance(item, dict) for item in items):
+            raise ValueError("Menu response is malformed")
+        return items, None
+    except requests.Timeout:
+        return [], "The menu service timed out. Please try again."
+    except requests.ConnectionError:
+        return [], "The menu service is unavailable. Please try again."
+    except requests.RequestException:
+        return [], "The menu service returned an error. Please try again."
+    except (ValueError, TypeError, AttributeError):
+        return [], "The menu service returned an invalid response. Please try again."
+
+
+def _failure(message: str, tool_call_id: str) -> Command:
+    return Command(update={"messages": [ToolMessage(message, tool_call_id=tool_call_id)]})
+
+
+def _valid_quantity(quantity: object) -> bool:
+    return isinstance(quantity, int) and not isinstance(quantity, bool) and quantity > 0
+
+
+def _valid_price(price: object) -> bool:
+    return (
+        isinstance(price, (int, float))
+        and not isinstance(price, bool)
+        and price == price
+        and price not in (float("inf"), float("-inf"))
+        and price >= 0
+    )
+
+
+@tool
+def get_menu(
+    tool_call_id: Annotated[str, InjectedToolCallId],
+    state: Annotated[OrderState, InjectedState],
+):
+    """Provide the latest up-to-date menu."""
+    items, error = _fetch_menu_items(state)
+    if error:
+        return ToolMessage(error, tool_call_id=tool_call_id)
+    return items
 
 
 @tool
@@ -40,16 +76,29 @@ def add_cart(item_id: str, title: str, new_item: CartItemUnit, tool_call_id: Ann
     new_item: Cart item details with base_price, quantity, and variation (only if the item has variants like Full/Half)
     """
 
-    # Handle variation ID safely
+    if not _valid_quantity(new_item.quantity):
+        return _failure("Quantity must be greater than zero.", tool_call_id)
+
+    items, error = _fetch_menu_items(state)
+    if error:
+        return _failure(f"Cannot add item: {error}", tool_call_id)
+
+    menu_item = next((item for item in items if item.get("id") == item_id), None)
+    if menu_item is None or menu_item.get("title") != title:
+        return _failure("That item is not available on the current menu.", tool_call_id)
+    authoritative_price = menu_item.get("base_price")
+    if not _valid_price(authoritative_price):
+        return _failure("That menu item has invalid pricing and cannot be added.", tool_call_id)
+
     variation_id = "no_variant"
     valid_variation = None
-
-    # Only process variation if it exists and has valid data
-    if (new_item.variation and
-        hasattr(new_item.variation, 'id') and
-        new_item.variation.id and
-            new_item.variation.id.strip()):
-        variation_id = new_item.variation.id
+    if new_item.variation is not None:
+        variation_id = new_item.variation.id.strip()
+        variations = menu_item.get("variations", [])
+        if not variation_id or not isinstance(variations, list):
+            return _failure("That item variation is not available on the current menu.", tool_call_id)
+        if not any(isinstance(variation, dict) and variation.get("id") == variation_id for variation in variations):
+            return _failure("That item variation is not available on the current menu.", tool_call_id)
         valid_variation = new_item.variation
 
     item_key = f"{item_id}|{variation_id}"
@@ -58,11 +107,9 @@ def add_cart(item_id: str, title: str, new_item: CartItemUnit, tool_call_id: Ann
     updated_unit = CartItemUnit(
         key=item_key,
         quantity=new_item.quantity,
-        base_price=new_item.base_price,
+        base_price=authoritative_price,
         variation=valid_variation
     )
-
-    print(updated_unit)
 
     # Get current cart
     current_cart = state["cart"]
@@ -122,11 +169,9 @@ def add_cart(item_id: str, title: str, new_item: CartItemUnit, tool_call_id: Ann
 
         updated_cart = Cart(items=updated_items)
 
-    print("Printing cart")
-    pprint(updated_cart.model_dump())
-
     return Command(update={
         "cart": updated_cart,
+        "order_confirmation_pending": False,
         "messages": [
             ToolMessage(
                 f"Added {title} to cart", tool_call_id=tool_call_id)
@@ -145,10 +190,15 @@ def remove_from_cart(item_id: str, title: str, new_item: CartItemUnit, tool_call
     new_item: A dict containing base_price and quantity of the item to remove
     """
 
+    if not _valid_quantity(new_item.quantity):
+        return _failure("Quantity must be greater than zero.", tool_call_id)
+
     # Handle variation ID safely
     variation_id = "no_variant"
-    if new_item.variation and hasattr(new_item.variation, 'id'):
-        variation_id = new_item.variation.id
+    if new_item.variation:
+        variation_id = new_item.variation.id.strip()
+        if not variation_id:
+            return _failure("A valid variation ID is required.", tool_call_id)
 
     item_key = f"{item_id}|{variation_id}"
 
@@ -222,11 +272,9 @@ def remove_from_cart(item_id: str, title: str, new_item: CartItemUnit, tool_call
         # Update cart with remaining items
         updated_cart = Cart(items=updated_items)
 
-    print("Cart after removal:")
-    pprint(updated_cart.model_dump())
-
     return Command(update={
         "cart": updated_cart,
+        "order_confirmation_pending": False,
         "messages": [
             ToolMessage(removal_message, tool_call_id=tool_call_id)
         ]
@@ -241,6 +289,7 @@ def clear_cart(
 
     return Command(update={
         "cart": Cart(items=[]),
+        "order_confirmation_pending": False,
         "messages": [
             ToolMessage(
                 "Cart cleared successfully.",
@@ -251,10 +300,32 @@ def clear_cart(
 
 
 @tool
-def confirm_order(state: Annotated[OrderState, InjectedState]):
-    """Provide the lastest items in the cart for user to confirm"""
-    return state['cart']
+def confirm_order(
+    tool_call_id: Annotated[str, InjectedToolCallId],
+    state: Annotated[OrderState, InjectedState],
+):
+    """Show the current cart summary before placing an order."""
+    cart = state.get("cart")
+    if cart is None or not cart.items:
+        return _failure("Cart is empty. Add items before placing an order.", tool_call_id)
 
+    item_lines = []
+    total = 0.0
+    for item in cart.items:
+        for unit in item.units:
+            line_total = unit.quantity * unit.base_price
+            total += line_total
+            item_lines.append(f"- {item.title} × {unit.quantity} — ₹{line_total:g}")
+
+    return Command(update={
+        "order_confirmation_pending": True,
+        "messages": [
+            ToolMessage(
+                "Order summary:\n" + "`r`n".join(item_lines) + f"`r`n`r`nTotal: ₹{total:g}",
+                tool_call_id=tool_call_id,
+            )
+        ],
+    })
 
 @tool
 def get_cart(state: Annotated[OrderState, InjectedState]):
@@ -269,6 +340,12 @@ def place_order(tool_call_id: Annotated[str, InjectedToolCallId], state: Annotat
 
     current_cart = state['cart']
 
+    if state.get("orderId") and state.get("order_status") == "confirmed":
+        return _failure(
+            "An order is already confirmed for this session. Check or cancel it before placing another order.",
+            tool_call_id,
+        )
+
     # Check if cart is empty
     if current_cart is None or not current_cart.items:
         return Command(update={
@@ -281,15 +358,25 @@ def place_order(tool_call_id: Annotated[str, InjectedToolCallId], state: Annotat
         })
 
     order_items = []
-    for cart_item in current_cart.items:
-        for unit in cart_item.units:
-            order_items.append({
-                "item_id": cart_item.item_id,
-                "title": cart_item.title,
-                "quantity": unit.quantity,
-                "base_price": unit.base_price,
-                "variation": unit.variation.model_dump() if unit.variation else None,
-            })
+    try:
+        for cart_item in current_cart.items:
+            if not cart_item.item_id or not cart_item.title:
+                raise ValueError("Cart item is malformed")
+            for unit in cart_item.units:
+                if not _valid_quantity(unit.quantity) or not _valid_price(unit.base_price):
+                    raise ValueError("Cart item has invalid quantity or price")
+                order_items.append({
+                    "item_id": cart_item.item_id,
+                    "title": cart_item.title,
+                    "quantity": unit.quantity,
+                    "base_price": unit.base_price,
+                    "variation": unit.variation.model_dump() if unit.variation else None,
+                })
+    except (AttributeError, TypeError, ValueError):
+        return _failure("Cannot place order because the cart contains invalid items.", tool_call_id)
+
+    if not order_items:
+        return _failure("Cannot place order. Cart is empty. Please add items to your cart first.", tool_call_id)
 
     order_url = f"{config.MENU_BACKEND_URL.rstrip('/')}/orders"
     payload = {
@@ -302,24 +389,30 @@ def place_order(tool_call_id: Annotated[str, InjectedToolCallId], state: Annotat
         response = requests.post(order_url, json=payload, timeout=10)
         response.raise_for_status()
         result = response.json()
+        if not isinstance(result, dict):
+            raise ValueError("Order API response is malformed")
         order_id = result.get("order_id")
-        if not isinstance(order_id, str) or not order_id:
+        status = result.get("status")
+        subtotal = result.get("subtotal")
+        if not isinstance(order_id, str) or not order_id or status != "confirmed":
             raise ValueError("Order API response did not include a valid order_id")
+        if not _valid_price(subtotal):
+            raise ValueError("Order API response included an invalid subtotal")
     except requests.Timeout:
         error_message = "Unable to place order: the ordering service timed out. Please try again."
     except requests.ConnectionError:
         error_message = "Unable to place order: the ordering service is unavailable. Please try again."
     except requests.RequestException as exc:
         error_message = f"Unable to place order: the ordering service returned an error ({exc})."
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, AttributeError):
         error_message = "Unable to place order: the ordering service returned an invalid response."
     else:
         total_items = sum(item["quantity"] for item in order_items)
-        subtotal = result.get("subtotal", "unknown")
         return Command(update={
             "cart": Cart(items=[]),
             "orderId": order_id,
-            "order_status": result.get("status", "confirmed"),
+            "order_status": status,
+            "order_confirmation_pending": False,
             "finished": True,
             "messages": [
                 ToolMessage(

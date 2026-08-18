@@ -1,5 +1,9 @@
 from langchain_core.messages import AIMessage
+from langchain_core.messages import HumanMessage
 from langgraph.graph import StateGraph, START, END
+from unittest.mock import Mock, patch
+
+import requests
 
 import sys
 from pathlib import Path
@@ -20,6 +24,7 @@ def make_state(cart):
         "messages": [],
         "orderId": None,
         "order_status": None,
+        "order_confirmation_pending": False,
         "restaurant_name": "Test Restaurant",
         "subdomain": "test",
         "cart": cart,
@@ -55,7 +60,7 @@ def run_tool(state, tool_name, args, tool_call_id):
 
     compiled = graph.compile()
 
-    state["messages"] = [
+    state["messages"] = list(state.get("messages", [])) + [
         AIMessage(
             content="",
             tool_calls=[
@@ -70,6 +75,20 @@ def run_tool(state, tool_name, args, tool_call_id):
     ]
 
     return compiled.invoke(state)
+
+
+def menu_response(items=None):
+    response = Mock()
+    response.json.return_value = {
+        "items": items if items is not None else [{
+            "id": "item-001",
+            "title": "Chicken Biryani",
+            "base_price": 220.0,
+            "variations": [],
+        }]
+    }
+    response.raise_for_status.return_value = None
+    return response
 
 
 def test_remove_one_item():
@@ -190,3 +209,73 @@ def test_clear_empty_cart():
     )
 
     assert result["cart"].items == []
+
+
+def test_add_cart_uses_authoritative_menu_price():
+    state = make_state(Cart(items=[]))
+    with patch("src.agents.tools.cart.requests.get", return_value=menu_response()) as get:
+        result = run_tool(
+            state,
+            "add_cart",
+            {
+                "item_id": "item-001",
+                "title": "Chicken Biryani",
+                "new_item": {
+                    "key": "item-001|no_variant",
+                    "quantity": 2,
+                    "base_price": 1.0,
+                },
+            },
+            "test-add-authoritative-price",
+        )
+    assert get.call_args.kwargs["timeout"] == 10
+    assert result["cart"].items[0].units[0].base_price == 220.0
+
+
+def test_add_cart_rejects_invalid_quantity_and_menu_item():
+    state = make_state(Cart(items=[]))
+    with patch("src.agents.tools.cart.requests.get") as get:
+        invalid_quantity = run_tool(
+            state,
+            "add_cart",
+            {
+                "item_id": "item-001", "title": "Chicken Biryani",
+                "new_item": {"key": "item-001|no_variant", "quantity": 0, "base_price": 220.0},
+            },
+            "test-add-zero",
+        )
+    get.assert_not_called()
+    assert invalid_quantity["cart"].items == []
+
+    with patch("src.agents.tools.cart.requests.get", return_value=menu_response()):
+        missing_item = run_tool(
+            state,
+            "add_cart",
+            {
+                "item_id": "item-999", "title": "Unknown",
+                "new_item": {"key": "item-999|no_variant", "quantity": 1, "base_price": 220.0},
+            },
+            "test-add-missing",
+        )
+    assert missing_item["cart"].items == []
+
+
+def test_get_menu_handles_service_timeout_without_crashing():
+    state = make_state(Cart(items=[]))
+    with patch("src.agents.tools.cart.requests.get", side_effect=requests.Timeout):
+        result = run_tool(state, "get_menu", {}, "test-menu-timeout")
+    assert "timed out" in result["messages"][-1].content
+
+
+def test_remove_cart_rejects_zero_quantity():
+    state = make_state(make_cart(2))
+    result = run_tool(
+        state,
+        "remove_from_cart",
+        {
+            "item_id": "item-001", "title": "Chicken Biryani",
+            "new_item": {"key": "item-001|no_variant", "quantity": 0, "base_price": 220.0},
+        },
+        "test-remove-zero",
+    )
+    assert result["cart"].items[0].units[0].quantity == 2

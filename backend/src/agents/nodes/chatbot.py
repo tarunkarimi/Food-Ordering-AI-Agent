@@ -1,4 +1,4 @@
-﻿from langchain_core.messages.ai import AIMessage
+from langchain_core.messages.ai import AIMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from src.agents.state import OrderState, Cart
@@ -21,7 +21,7 @@ def chatbot(state: OrderState) -> OrderState:
     """The chatbot itself. A wrapper around Gemini."""
 
     model = ChatGoogleGenerativeAI(
-        model="gemini-3.5-flash",
+        model="gemini-3.5-flash-lite",
         google_api_key=config.GOOGLE_API_KEY,
     )
 

@@ -119,6 +119,7 @@ function readQuotedValue(source, start, quote) {
     // string or escaped apostrophes inside a single-quoted string.
     if (char === quote) {
       const rest = source.slice(i + 1);
+
       if (
         /^\s*(?:,|\})/.test(rest) ||
         /^\s*$/.test(rest)
@@ -169,6 +170,7 @@ function extractTextFromValue(value) {
       const extracted = extractTextFromValue(item);
       if (extracted) return extracted;
     }
+
     return "";
   }
 
@@ -247,7 +249,11 @@ function App() {
   const [placingOrder, setPlacingOrder] = useState(false);
 
   const cartItemCount = useMemo(
-    () => cart.reduce((total, item) => total + Number(item.quantity || 0), 0),
+    () =>
+      cart.reduce(
+        (total, item) => total + Number(item.quantity || 0),
+        0
+      ),
     [cart]
   );
 
@@ -296,6 +302,7 @@ function App() {
       }
     } catch (error) {
       console.error("Menu loading error:", error);
+
       setMenuError(
         "Could not load the restaurant menu. Check that the menu backend is running on port 8000."
       );
@@ -306,17 +313,28 @@ function App() {
 
   function addToCart(item) {
     setCart((previous) => {
-      const existing = previous.find((cartItem) => cartItem.id === item.id);
+      const existing = previous.find(
+        (cartItem) => cartItem.id === item.id
+      );
 
       if (existing) {
         return previous.map((cartItem) =>
           cartItem.id === item.id
-            ? { ...cartItem, quantity: cartItem.quantity + 1 }
+            ? {
+                ...cartItem,
+                quantity: cartItem.quantity + 1,
+              }
             : cartItem
         );
       }
 
-      return [...previous, { ...item, quantity: 1 }];
+      return [
+        ...previous,
+        {
+          ...item,
+          quantity: 1,
+        },
+      ];
     });
   }
 
@@ -325,7 +343,10 @@ function App() {
       previous
         .map((item) =>
           item.id === itemId
-            ? { ...item, quantity: item.quantity - 1 }
+            ? {
+                ...item,
+                quantity: item.quantity - 1,
+              }
             : item
         )
         .filter((item) => item.quantity > 0)
@@ -333,50 +354,117 @@ function App() {
   }
 
   function removeFromCart(itemId) {
-    setCart((previous) => previous.filter((item) => item.id !== itemId));
+    setCart((previous) =>
+      previous.filter((item) => item.id !== itemId)
+    );
+  }
+
+  // Sync the React cart with the authoritative cart stored
+  // in the AI/LangGraph backend.
+  async function syncCartFromAI(sessionId) {
+    try {
+      const response = await fetch(
+        `/api/chats/state?session_id=${encodeURIComponent(sessionId)}`
+      );
+
+      if (!response.ok) {
+        throw new Error(`State request failed: ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      const backendCart = data?.[0]?.cart;
+
+      if (!backendCart || !Array.isArray(backendCart.items)) {
+        setCart([]);
+        return;
+      }
+
+      const syncedCart = backendCart.items.flatMap((item) =>
+        (item.units || []).map((unit) => ({
+          id: unit.key || item.item_id,
+          item_id: item.item_id,
+          title: item.title,
+          quantity: Number(unit.quantity || 0),
+          base_price: Number(unit.base_price || 0),
+          variation: unit.variation || null,
+        }))
+      );
+
+      setCart(
+        syncedCart.filter(
+          (item) => item.quantity > 0
+        )
+      );
+    } catch (error) {
+      console.error("Cart sync error:", error);
+    }
   }
 
   async function sendMessage(event) {
     event.preventDefault();
 
     const message = input.trim();
+
     if (!message || sending) return;
 
     setInput("");
+
     setMessages((previous) => [
       ...previous,
-      { role: "user", content: message },
+      {
+        role: "user",
+        content: message,
+      },
     ]);
 
     try {
       setSending(true);
 
       const sessionId =
-        localStorage.getItem("food_agent_session") || crypto.randomUUID();
+        localStorage.getItem("food_agent_session") ||
+        crypto.randomUUID();
 
-      localStorage.setItem("food_agent_session", sessionId);
+      localStorage.setItem(
+        "food_agent_session",
+        sessionId
+      );
 
-      const response = await fetch(`${AI_API}/api/chats/orders`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          user_message: message,
-          session_id: sessionId,
-          restaurant_name: restaurant,
-          subdomain: "test",
-        }),
-      });
+      const response = await fetch(
+        `${AI_API}/api/chats/orders`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            user_message: message,
+            session_id: sessionId,
+            restaurant_name: restaurant,
+            subdomain: "test",
+          }),
+        }
+      );
 
       const rawResponse = await response.text();
-      console.log("AI raw response:", rawResponse);
+
+      console.log(
+        "AI raw response:",
+        rawResponse
+      );
 
       if (!response.ok) {
-        throw new Error(`AI request failed: ${response.status}`);
+        throw new Error(
+          `AI request failed: ${response.status}`
+        );
       }
 
-      const assistantText = extractAssistantText(rawResponse);
+      const assistantText =
+        extractAssistantText(rawResponse);
+
+      // Get the authoritative cart from the AI backend
+      // after the AI has processed the user's message.
+      await syncCartFromAI(sessionId);
 
       setMessages((previous) => [
         ...previous,
@@ -388,7 +476,10 @@ function App() {
         },
       ]);
     } catch (error) {
-      console.error("AI request error:", error);
+      console.error(
+        "AI request error:",
+        error
+      );
 
       setMessages((previous) => [
         ...previous,
@@ -409,28 +500,33 @@ function App() {
     try {
       setPlacingOrder(true);
 
-      const response = await fetch(`${MENU_API}/orders`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          restaurant_name: restaurant,
-          subdomain: "test",
-          items: cart.map((item) => ({
-            item_id: item.id,
-            title: item.title,
-            quantity: item.quantity,
-            base_price: item.base_price,
-            variation: null,
-          })),
-        }),
-      });
+      const response = await fetch(
+        `${MENU_API}/orders`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            restaurant_name: restaurant,
+            subdomain: "test",
+            items: cart.map((item) => ({
+              item_id: item.item_id || item.id,
+              title: item.title,
+              quantity: item.quantity,
+              base_price: item.base_price,
+              variation: item.variation || null,
+            })),
+          }),
+        }
+      );
 
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.detail || "Order failed");
+        throw new Error(
+          data.detail || "Order failed"
+        );
       }
 
       setOrder(data);
@@ -446,7 +542,10 @@ function App() {
         },
       ]);
     } catch (error) {
-      console.error("Order error:", error);
+      console.error(
+        "Order error:",
+        error
+      );
 
       setMessages((previous) => [
         ...previous,
@@ -464,14 +563,19 @@ function App() {
     if (!order) return;
 
     try {
-      const response = await fetch(`${MENU_API}/orders/${order.order_id}`, {
-        method: "DELETE",
-      });
+      const response = await fetch(
+        `${MENU_API}/orders/${order.order_id}`,
+        {
+          method: "DELETE",
+        }
+      );
 
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.detail || "Cancellation failed");
+        throw new Error(
+          data.detail || "Cancellation failed"
+        );
       }
 
       setOrder(data);
@@ -484,7 +588,10 @@ function App() {
         },
       ]);
     } catch (error) {
-      console.error("Cancellation error:", error);
+      console.error(
+        "Cancellation error:",
+        error
+      );
 
       setMessages((previous) => [
         ...previous,
@@ -520,11 +627,18 @@ function App() {
         <section className="menu-section">
           <div className="section-heading">
             <div>
-              <p className="eyebrow">TODAY'S MENU</p>
-              <h2>What are you craving?</h2>
+              <p className="eyebrow">
+                TODAY'S MENU
+              </p>
+
+              <h2>
+                What are you craving?
+              </h2>
             </div>
 
-            <div className="menu-count">{menu.length} items</div>
+            <div className="menu-count">
+              {menu.length} items
+            </div>
           </div>
 
           {loadingMenu ? (
@@ -535,15 +649,24 @@ function App() {
           ) : menuError ? (
             <div className="loading">
               <p>{menuError}</p>
-              <button className="add-button" onClick={loadMenu}>
+
+              <button
+                className="add-button"
+                onClick={loadMenu}
+              >
                 Try Again
               </button>
             </div>
           ) : (
             <div className="menu-grid">
               {menu.map((item) => (
-                <article className="food-card" key={item.id}>
-                  <div className="food-image">🍛</div>
+                <article
+                  className="food-card"
+                  key={item.id}
+                >
+                  <div className="food-image">
+                    🍲
+                  </div>
 
                   <div className="food-info">
                     <h3>{item.title}</h3>
@@ -554,11 +677,18 @@ function App() {
                     </p>
 
                     <div className="food-bottom">
-                      <strong>₹{Number(item.base_price || 0).toFixed(2)}</strong>
+                      <strong>
+                        ₹
+                        {Number(
+                          item.base_price || 0
+                        ).toFixed(2)}
+                      </strong>
 
                       <button
                         className="add-button"
-                        onClick={() => addToCart(item)}
+                        onClick={() =>
+                          addToCart(item)
+                        }
                       >
                         <Plus size={17} />
                         Add
@@ -579,22 +709,31 @@ function App() {
               </div>
 
               <div>
-                <h3>FoodAI Assistant</h3>
-                <span>Online • Ready to order</span>
+                <h3>
+                  FoodAI Assistant
+                </h3>
+
+                <span>
+                  Online • Ready to order
+                </span>
               </div>
             </div>
 
             <div className="messages">
-              {messages.map((message, index) => (
-                <div
-                  key={index}
-                  className={`message ${
-                    message.role === "user" ? "user-message" : "ai-message"
-                  }`}
-                >
-                  {message.content}
-                </div>
-              ))}
+              {messages.map(
+                (message, index) => (
+                  <div
+                    key={index}
+                    className={`message ${
+                      message.role === "user"
+                        ? "user-message"
+                        : "ai-message"
+                    }`}
+                  >
+                    {message.content}
+                  </div>
+                )
+              )}
 
               {sending && (
                 <div className="message ai-message typing">
@@ -605,21 +744,31 @@ function App() {
               )}
             </div>
 
-            <form className="chat-input" onSubmit={sendMessage}>
+            <form
+              className="chat-input"
+              onSubmit={sendMessage}
+            >
               <input
                 value={input}
-                onChange={(event) => setInput(event.target.value)}
+                onChange={(event) =>
+                  setInput(event.target.value)
+                }
                 placeholder="Ask me what you'd like..."
                 disabled={sending}
               />
 
               <button
                 type="submit"
-                disabled={!input.trim() || sending}
+                disabled={
+                  !input.trim() || sending
+                }
                 aria-label="Send message"
               >
                 {sending ? (
-                  <Loader2 className="spin" size={18} />
+                  <Loader2
+                    className="spin"
+                    size={18}
+                  />
                 ) : (
                   <Send size={18} />
                 )}
@@ -630,7 +779,9 @@ function App() {
           <section className="cart-card">
             <div className="card-title">
               <div>
-                <p className="eyebrow">YOUR ORDER</p>
+                <p className="eyebrow">
+                  YOUR ORDER
+                </p>
 
                 <h3>
                   <ShoppingCart size={19} />
@@ -638,44 +789,67 @@ function App() {
                 </h3>
               </div>
 
-              <span>{cartItemCount} items</span>
+              <span>
+                {cartItemCount} items
+              </span>
             </div>
 
             {cart.length === 0 ? (
               <div className="empty-cart">
                 <ShoppingCart size={35} />
 
-                <p>Your cart is empty</p>
+                <p>
+                  Your cart is empty
+                </p>
 
-                <span>Add something delicious from the menu.</span>
+                <span>
+                  Add something delicious
+                  from the menu.
+                </span>
               </div>
             ) : (
               <>
                 <div className="cart-items">
                   {cart.map((item) => (
-                    <div className="cart-item" key={item.id}>
+                    <div
+                      className="cart-item"
+                      key={item.id}
+                    >
                       <div className="cart-item-info">
-                        <strong>{item.title}</strong>
+                        <strong>
+                          {item.title}
+                        </strong>
 
                         <span>
-                          ₹{Number(item.base_price || 0).toFixed(2)} ×{" "}
-                          {item.quantity}
+                          ₹
+                          {Number(
+                            item.base_price || 0
+                          ).toFixed(2)}{" "}
+                          × {item.quantity}
                         </span>
                       </div>
 
                       <div className="quantity-controls">
                         <button
                           type="button"
-                          onClick={() => decreaseQuantity(item.id)}
+                          onClick={() =>
+                            decreaseQuantity(
+                              item.id
+                            )
+                          }
                         >
                           <Minus size={14} />
                         </button>
 
-                        <span>{item.quantity}</span>
+                        <span>
+                          {item.quantity}
+                        </span>
 
                         <button
                           type="button"
-                          onClick={() => addToCart(item)}
+                          onClick={() =>
+                            addToCart(item)
+                          }
                         >
                           <Plus size={14} />
                         </button>
@@ -683,7 +857,11 @@ function App() {
                         <button
                           type="button"
                           className="delete-button"
-                          onClick={() => removeFromCart(item.id)}
+                          onClick={() =>
+                            removeFromCart(
+                              item.id
+                            )
+                          }
                         >
                           <Trash2 size={14} />
                         </button>
@@ -693,8 +871,13 @@ function App() {
                 </div>
 
                 <div className="cart-total">
-                  <span>Subtotal</span>
-                  <strong>₹{subtotal.toFixed(2)}</strong>
+                  <span>
+                    Subtotal
+                  </span>
+
+                  <strong>
+                    ₹{subtotal.toFixed(2)}
+                  </strong>
                 </div>
 
                 <button
@@ -704,12 +887,17 @@ function App() {
                 >
                   {placingOrder ? (
                     <>
-                      <Loader2 className="spin" size={18} />
+                      <Loader2
+                        className="spin"
+                        size={18}
+                      />
                       Placing order...
                     </>
                   ) : (
                     <>
-                      <CheckCircle2 size={18} />
+                      <CheckCircle2
+                        size={18}
+                      />
                       Place Order
                     </>
                   )}
@@ -721,24 +909,38 @@ function App() {
           {order && (
             <section
               className={`order-status ${
-                order.status === "cancelled" ? "cancelled" : ""
+                order.status === "cancelled"
+                  ? "cancelled"
+                  : ""
               }`}
             >
               <div className="order-status-header">
-                {order.status === "cancelled" ? (
+                {order.status ===
+                "cancelled" ? (
                   <XCircle size={22} />
                 ) : (
-                  <CheckCircle2 size={22} />
+                  <CheckCircle2
+                    size={22}
+                  />
                 )}
 
                 <div>
-                  <strong>{order.order_id}</strong>
-                  <span>{order.status}</span>
+                  <strong>
+                    {order.order_id}
+                  </strong>
+
+                  <span>
+                    {order.status}
+                  </span>
                 </div>
               </div>
 
-              {order.status === "confirmed" && (
-                <button className="cancel-order" onClick={cancelOrder}>
+              {order.status ===
+                "confirmed" && (
+                <button
+                  className="cancel-order"
+                  onClick={cancelOrder}
+                >
                   Cancel Order
                 </button>
               )}
@@ -751,7 +953,3 @@ function App() {
 }
 
 export default App;
-
-
-
-

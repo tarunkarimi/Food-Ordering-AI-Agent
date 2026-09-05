@@ -1,8 +1,10 @@
-﻿from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+﻿import json
+import logging
 from typing import Optional
-import json
+
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 from src.agents.graph import chatbot_agent_builder
 from src.agents.state import Cart, CartItem, CartItemUnit, ItemVariation
@@ -13,33 +15,79 @@ from src.agents.tools.cart import (
 )
 
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
+
+# ------------------------------------------------------------------
 # Build the chatbot agent once when the application starts.
+# ------------------------------------------------------------------
+
 chatbot_agent = chatbot_agent_builder()
 
 
+# ------------------------------------------------------------------
+# Request models
+# ------------------------------------------------------------------
+
 class ChatRequest(BaseModel):
-    user_message: str
-    session_id: Optional[str]
-    restaurant_name: str
-    subdomain: str
+    user_message: str = Field(
+        ...,
+        min_length=1,
+        description="Message from the customer.",
+    )
+    session_id: str = Field(
+        ...,
+        min_length=1,
+        description="Conversation session identifier.",
+    )
+    restaurant_name: str = Field(
+        ...,
+        min_length=1,
+        description="Restaurant name.",
+    )
+    subdomain: str = Field(
+        ...,
+        min_length=1,
+        description="Restaurant subdomain.",
+    )
 
 
 class ManualCartRequest(BaseModel):
-    session_id: str
-    restaurant_name: str
-    subdomain: str
+    session_id: str = Field(
+        ...,
+        min_length=1,
+        description="Conversation session identifier.",
+    )
+    restaurant_name: str = Field(
+        ...,
+        min_length=1,
+        description="Restaurant name.",
+    )
+    subdomain: str = Field(
+        ...,
+        min_length=1,
+        description="Restaurant subdomain.",
+    )
     item_id: Optional[str] = None
     title: Optional[str] = None
-    quantity: int = 1
+    quantity: int = Field(
+        default=1,
+        gt=0,
+        description="Quantity to add or remove.",
+    )
     variation_id: Optional[str] = None
 
+
+# ------------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------------
 
 def _session_config(session_id: str):
     return {
         "configurable": {
-            "thread_id": session_id.strip()
+            "thread_id": session_id.strip(),
         }
     }
 
@@ -111,11 +159,9 @@ def _authoritative_unit(
     selected_variation_id = "no_variant"
     selected_variation = None
 
-    # Default cart price is the menu item's base price.
     cart_unit_price = authoritative_price
 
     if variations:
-
         if not variation_id:
             raise ValueError(
                 "Please specify a valid variation for this item."
@@ -168,8 +214,6 @@ def _authoritative_unit(
             price=str(raw_variation_price),
         )
 
-        # IMPORTANT:
-        # Variation price is the actual cart price.
         cart_unit_price = variation_price
 
     item_key = f"{item_id}|{selected_variation_id}"
@@ -223,7 +267,6 @@ def _add_to_cart(
                             existing_unit.quantity
                             + quantity
                         ),
-                        # Use the authoritative current price.
                         base_price=new_unit.base_price,
                         variation=new_unit.variation,
                     )
@@ -296,7 +339,6 @@ def _remove_from_cart(
             unit_found = True
 
             if existing_unit.quantity > quantity:
-
                 updated_units.append(
                     CartItemUnit(
                         key=existing_unit.key,
@@ -310,12 +352,9 @@ def _remove_from_cart(
                 )
 
             elif existing_unit.quantity == quantity:
-                # Remove this variation completely.
-
                 pass
 
             else:
-                # Do not remove more than exists.
                 updated_units.append(existing_unit)
 
         if unit_found:
@@ -340,11 +379,16 @@ def _remove_from_cart(
     return Cart(items=updated_items)
 
 
+# ------------------------------------------------------------------
+# State endpoint
+# ------------------------------------------------------------------
+
 @router.get("/state")
 def get_current_state(session_id: str):
     """
     Return the current LangGraph state for a conversation session.
     """
+
     try:
         if not session_id or not session_id.strip():
             raise ValueError("session_id is missing.")
@@ -355,17 +399,30 @@ def get_current_state(session_id: str):
 
         return state
 
-    except Exception as e:
+    except ValueError as exc:
         raise HTTPException(
             status_code=400,
-            detail=str(e),
+            detail=str(exc),
         )
 
+    except Exception:
+        logger.exception(
+            "Failed to retrieve state for session."
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to retrieve the current session state.",
+        )
+
+
+# ------------------------------------------------------------------
+# Manual cart add
+# ------------------------------------------------------------------
 
 @router.post("/cart/add")
 def manual_add_to_cart(request: ManualCartRequest):
     try:
-
         if not request.session_id.strip():
             raise ValueError("session_id is missing.")
 
@@ -380,11 +437,6 @@ def manual_add_to_cart(request: ManualCartRequest):
 
         if not request.title:
             raise ValueError("title is required.")
-
-        if not _valid_quantity(request.quantity):
-            raise ValueError(
-                "Quantity must be greater than zero."
-            )
 
         items, error = _fetch_menu_items(
             {
@@ -432,17 +484,30 @@ def manual_add_to_cart(request: ManualCartRequest):
             "cart": updated_cart,
         }
 
-    except Exception as e:
+    except ValueError as exc:
         raise HTTPException(
             status_code=400,
-            detail=str(e),
+            detail=str(exc),
         )
 
+    except Exception:
+        logger.exception(
+            "Unexpected error while adding item to cart."
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to add the item to the cart.",
+        )
+
+
+# ------------------------------------------------------------------
+# Manual cart remove
+# ------------------------------------------------------------------
 
 @router.post("/cart/remove")
 def manual_remove_from_cart(request: ManualCartRequest):
     try:
-
         if not request.session_id.strip():
             raise ValueError("session_id is missing.")
 
@@ -451,11 +516,6 @@ def manual_remove_from_cart(request: ManualCartRequest):
 
         if not request.title:
             raise ValueError("title is required.")
-
-        if not _valid_quantity(request.quantity):
-            raise ValueError(
-                "Quantity must be greater than zero."
-            )
 
         current_cart = _get_existing_cart(
             request.session_id
@@ -474,6 +534,7 @@ def manual_remove_from_cart(request: ManualCartRequest):
             {
                 "cart": updated_cart,
                 "order_confirmation_pending": False,
+                "finished": False,
             },
         )
 
@@ -482,17 +543,30 @@ def manual_remove_from_cart(request: ManualCartRequest):
             "cart": updated_cart,
         }
 
-    except Exception as e:
+    except ValueError as exc:
         raise HTTPException(
             status_code=400,
-            detail=str(e),
+            detail=str(exc),
         )
 
+    except Exception:
+        logger.exception(
+            "Unexpected error while removing item from cart."
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to remove the item from the cart.",
+        )
+
+
+# ------------------------------------------------------------------
+# Manual cart clear
+# ------------------------------------------------------------------
 
 @router.post("/cart/clear")
 def manual_clear_cart(request: ManualCartRequest):
     try:
-
         if not request.session_id.strip():
             raise ValueError("session_id is missing.")
 
@@ -501,6 +575,7 @@ def manual_clear_cart(request: ManualCartRequest):
             {
                 "cart": Cart(items=[]),
                 "order_confirmation_pending": False,
+                "finished": False,
             },
         )
 
@@ -509,12 +584,26 @@ def manual_clear_cart(request: ManualCartRequest):
             "cart": Cart(items=[]),
         }
 
-    except Exception as e:
+    except ValueError as exc:
         raise HTTPException(
             status_code=400,
-            detail=str(e),
+            detail=str(exc),
         )
 
+    except Exception:
+        logger.exception(
+            "Unexpected error while clearing cart."
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to clear the cart.",
+        )
+
+
+# ------------------------------------------------------------------
+# AI chat / order endpoint
+# ------------------------------------------------------------------
 
 @router.post("/orders")
 async def chat_order(request: ChatRequest):
@@ -523,208 +612,135 @@ async def chat_order(request: ChatRequest):
     and stream AI responses using Server-Sent Events (SSE).
     """
 
-    try:
+    session_id = request.session_id.strip()
+    user_message = request.user_message.strip()
+    restaurant_name = request.restaurant_name.strip()
+    subdomain = request.subdomain.strip()
 
-        if not request.session_id or not request.session_id.strip():
-            raise ValueError("session_id is missing.")
+    graph_config = _session_config(session_id)
 
-        if (
-            not request.user_message
-            or not request.user_message.strip()
-        ):
-            raise ValueError(
-                "user_message cannot be empty."
+    def generate_sse():
+        try:
+            events = chatbot_agent.stream(
+                {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": user_message,
+                        }
+                    ],
+                    "restaurant_name": restaurant_name,
+                    "subdomain": subdomain,
+                },
+                graph_config,
+                stream_mode="values",
             )
 
-        if (
-            not request.restaurant_name
-            or not request.restaurant_name.strip()
-        ):
-            raise ValueError(
-                "restaurant_name is required."
-            )
+            for event in events:
 
-        if (
-            not request.subdomain
-            or not request.subdomain.strip()
-        ):
-            raise ValueError(
-                "subdomain is required."
-            )
+                if not event:
+                    continue
 
-        session_id = request.session_id.strip()
-        user_message = request.user_message.strip()
-        restaurant_name = request.restaurant_name.strip()
-        subdomain = request.subdomain.strip()
-
-        graph_config = _session_config(session_id)
-
-        def generate_sse():
-
-            try:
-
-                events = chatbot_agent.stream(
-                    {
-                        "messages": [
-                            {
-                                "role": "user",
-                                "content": user_message,
-                            }
-                        ],
-                        "restaurant_name": restaurant_name,
-                        "subdomain": subdomain,
-                    },
-                    graph_config,
-                    stream_mode="values",
+                messages = event.get(
+                    "messages",
+                    [],
                 )
 
-                for event in events:
+                if not messages:
+                    continue
 
-                    if not event:
-                        continue
+                last_message = messages[-1]
+                message_type = type(last_message).__name__
 
-                    messages = event.get(
-                        "messages",
+                if message_type == "ToolMessage":
+                    if getattr(
+                        last_message,
+                        "status",
+                        None,
+                    ) == "error":
+                        logger.error(
+                            "Tool execution failed for session."
+                        )
+
+                if getattr(
+                    last_message,
+                    "type",
+                    None,
+                ) == "ai":
+                    tool_calls = getattr(
+                        last_message,
+                        "tool_calls",
                         [],
                     )
 
-                    if not messages:
-                        continue
-
-                    last_message = messages[-1]
-                    message_type = type(last_message).__name__
-
-                    if message_type == "ToolMessage":
-
-                        if getattr(
-                            last_message,
-                            "status",
-                            None,
-                        ) == "error":
-
-                            print(
-                                f"Tool error: "
-                                f"{last_message.content}"
-                            )
-
-                        else:
-
-                            content = str(
-                                getattr(
-                                    last_message,
-                                    "content",
-                                    "",
-                                )
-                            )
-
-                            print(
-                                f"ToolMessage: "
-                                f"{content[:100]}..."
-                            )
-
-                    else:
-
-                        content = str(
-                            getattr(
-                                last_message,
-                                "content",
-                                "",
-                            )
+                    if tool_calls:
+                        logger.info(
+                            "AI requested tool execution for session."
                         )
 
-                        print(
-                            f"{message_type}: {content}"
-                        )
-
-                    if getattr(
+                if message_type == "AIMessage":
+                    content = getattr(
                         last_message,
-                        "type",
-                        None,
-                    ) == "ai":
+                        "content",
+                        "",
+                    )
 
-                        tool_calls = getattr(
-                            last_message,
-                            "tool_calls",
-                            [],
-                        )
+                    tool_calls = getattr(
+                        last_message,
+                        "tool_calls",
+                        [],
+                    )
 
-                        if tool_calls:
-                            print(
-                                f"Tools called: "
-                                f"{tool_calls}"
+                    if content is None:
+                        content = ""
+
+                    if not isinstance(content, str):
+                        content = str(content)
+
+                    response_data = {
+                        "type": "AIMessage",
+                        "content": content,
+                        "tool_calls": tool_calls,
+                    }
+
+                    if content.strip():
+                        yield (
+                            "data: "
+                            + json.dumps(
+                                response_data,
+                                default=str,
                             )
-
-                    if message_type == "AIMessage":
-
-                        content = getattr(
-                            last_message,
-                            "content",
-                            "",
+                            + "\n\n"
                         )
 
-                        tool_calls = getattr(
-                            last_message,
-                            "tool_calls",
-                            [],
-                        )
+            yield "data: [DONE]\n\n"
 
-                        if content is None:
-                            content = ""
+        except Exception:
+            logger.exception(
+                "Unexpected error while streaming AI response."
+            )
 
-                        if not isinstance(
-                            content,
-                            str,
-                        ):
-                            content = str(content)
+            error_data = {
+                "type": "error",
+                "content": (
+                    "The AI service encountered an unexpected "
+                    "error. Please try again."
+                ),
+            }
 
-                        response_data = {
-                            "type": "AIMessage",
-                            "content": content,
-                            "tool_calls": tool_calls,
-                        }
+            yield (
+                "data: "
+                + json.dumps(error_data)
+                + "\n\n"
+            )
 
-                        if content.strip():
+            yield "data: [DONE]\n\n"
 
-                            yield (
-                                "data: "
-                                + json.dumps(
-                                    response_data,
-                                    default=str,
-                                )
-                                + "\n\n"
-                            )
-
-                yield "data: [DONE]\n\n"
-
-            except Exception as e:
-
-                error_data = {
-                    "type": "error",
-                    "content": str(e),
-                }
-
-                yield (
-                    "data: "
-                    + json.dumps(error_data)
-                    + "\n\n"
-                )
-
-                yield "data: [DONE]\n\n"
-
-        return StreamingResponse(
-            generate_sse(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Headers": "*",
-            },
-        )
-
-    except Exception as e:
-
-        raise HTTPException(
-            status_code=400,
-            detail=str(e),
-        )
+    return StreamingResponse(
+        generate_sse(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )

@@ -1,55 +1,99 @@
-﻿from fastapi import FastAPI
+﻿import logging
+
 import uvicorn
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
 from src.api.routes.chats import router as chat_router
-import logging
-from dotenv import load_dotenv
-import os
 from src.configs.config import config
 
-load_dotenv()
 
-app = FastAPI()
+# ------------------------------------------------------------------
+# Logging
+# ------------------------------------------------------------------
 
-print("MENU_BACKEND_URL", config.MENU_BACKEND_URL)
-
-origins = [
-    "*",
-    "http://localhost:3000",
-]
-
-# Basic logging configuration
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('app.log'),
-        logging.StreamHandler()
-    ]
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
+
+logger = logging.getLogger(__name__)
+
+
+# ------------------------------------------------------------------
+# Application
+# ------------------------------------------------------------------
+
+app = FastAPI(
+    title="Food Ordering AI Agent",
+    version="1.0.0",
+)
+
+
+# ------------------------------------------------------------------
+# CORS
+# ------------------------------------------------------------------
+
+frontend_origins = [
+    origin.strip()
+    for origin in config.FRONTEND_ORIGINS.split(",")
+    if origin.strip()
+]
+
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=frontend_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.include_router(chat_router, prefix='/api/chats',
-                   tags=['workflows'])
 
+# ------------------------------------------------------------------
+# Routes
+# ------------------------------------------------------------------
+
+app.include_router(
+    chat_router,
+    prefix="/api/chats",
+    tags=["workflows"],
+)
+
+
+# ------------------------------------------------------------------
+# Health / Root
+# ------------------------------------------------------------------
 
 @app.get("/")
 def read_root():
-    return {"status": "Okay", "message": "Server is Running."}
+    return {
+        "status": "ok",
+        "message": "Server is running.",
+    }
 
+
+@app.get("/health")
+def health_check():
+    return {
+        "status": "ok",
+        "service": "ai-backend",
+    }
+
+
+# ------------------------------------------------------------------
+# Local development entry point
+# ------------------------------------------------------------------
 
 def main():
-    print("Hello from chatbot server!")
-    uvicorn.run(app, host="0.0.0.0", port=config.PORT)
+    logger.info("Starting AI backend on port %s", config.PORT)
+
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=config.PORT,
+    )
 
 
 if __name__ == "__main__":
     main()
-

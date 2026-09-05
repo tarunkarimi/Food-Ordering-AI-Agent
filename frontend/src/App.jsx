@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import {
   Bot,
   ShoppingCart,
@@ -84,130 +84,6 @@ function extractAssistantText(rawResponse) {
   return "";
 }
 
-function readQuotedValue(source, start, quote) {
-  let escaped = false;
-  let result = "";
-
-  for (let i = start; i < source.length; i += 1) {
-    const char = source[i];
-
-    if (escaped) {
-      result += char;
-      escaped = false;
-      continue;
-    }
-
-    if (char === "\\") {
-      result += char;
-      escaped = true;
-      continue;
-    }
-
-    if (char === quote) {
-      const rest = source.slice(i + 1);
-
-      if (
-        /^\s*(?:,|\})/.test(rest) ||
-        /^\s*$/.test(rest)
-      ) {
-        return result;
-      }
-    }
-
-    result += char;
-  }
-
-  return result;
-}
-
-function extractTextFromValue(value) {
-  if (value === null || value === undefined) return "";
-
-  if (typeof value === "string") {
-    const text = value.trim();
-
-    if (!text) return "";
-
-    const textKeyMatch = text.match(
-      /['"]text['"]\s*:\s*(['"])/
-    );
-
-    if (textKeyMatch) {
-      const quote = textKeyMatch[1];
-
-      const valueStart =
-        textKeyMatch.index +
-        textKeyMatch[0].length;
-
-      const extracted = readQuotedValue(
-        text,
-        valueStart,
-        quote
-      );
-
-      if (extracted) {
-        return decodeEscapedText(extracted).trim();
-      }
-    }
-
-    return text;
-  }
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const extracted =
-        extractTextFromValue(item);
-
-      if (extracted) return extracted;
-    }
-
-    return "";
-  }
-
-  if (typeof value === "object") {
-    if (
-      value.type === "text" &&
-      typeof value.text === "string" &&
-      value.text.trim()
-    ) {
-      return value.text.trim();
-    }
-
-    if (
-      typeof value.content === "string" &&
-      value.content.trim()
-    ) {
-      const extracted =
-        extractTextFromValue(value.content);
-
-      if (extracted) return extracted;
-    }
-
-    if (Array.isArray(value.content)) {
-      const extracted =
-        extractTextFromValue(value.content);
-
-      if (extracted) return extracted;
-    }
-
-    for (const key of [
-      "text",
-      "message",
-      "response",
-      "answer",
-    ]) {
-      if (
-        typeof value[key] === "string" &&
-        value[key].trim()
-      ) {
-        return value[key].trim();
-      }
-    }
-  }
-
-  return "";
-}
-
 function decodeEscapedText(text) {
   if (!text) return "";
 
@@ -240,7 +116,7 @@ function App() {
     {
       role: "assistant",
       content:
-        "Namaste! 🙏 I'm your AI food assistant. Ask me about the menu or tell me what you'd like to order.",
+        "Namaste! ðŸ™ I'm your AI food assistant. Ask me about the menu or tell me what you'd like to order.",
     },
   ]);
 
@@ -741,7 +617,7 @@ function App() {
         ...previous,
         {
           role: "assistant",
-          content: `Your order ${data.order_id} has been confirmed! 🎉 Your subtotal is ₹${Number(
+          content: `Your order ${data.order_id} has been confirmed! ðŸŽ‰ Your subtotal is â‚¹${Number(
             data.subtotal || 0
           ).toFixed(2)}.`,
         },
@@ -875,7 +751,7 @@ function App() {
                   key={item.id}
                 >
                   <div className="food-image">
-                    🍲
+                    ðŸ²
                   </div>
 
                   <div className="food-info">
@@ -889,12 +765,12 @@ function App() {
                     <div className="food-bottom">
                       <strong>
                         {getItemVariations(item).length > 0
-                          ? `From ₹${Number(
+                          ? `From â‚¹${Number(
                               getItemVariations(item)[0]?.price ||
                                 item.base_price ||
                                 0
                             ).toFixed(2)}`
-                          : `₹${getItemPrice(item).toFixed(2)}`}
+                          : `â‚¹${getItemPrice(item).toFixed(2)}`}
                       </strong>
 
                       <button
@@ -930,7 +806,7 @@ function App() {
                 </h3>
 
                 <span>
-                  Online • Ready to order
+                  Online â€¢ Ready to order
                 </span>
               </div>
             </div>
@@ -1049,11 +925,11 @@ function App() {
                         )}
 
                         <span>
-                          ₹{Number(
+                          â‚¹{Number(
                             item.base_price ||
                               0
                           ).toFixed(2)}{" "}
-                          ×{" "}
+                          Ã—{" "}
                           {item.quantity}
                         </span>
                       </div>
@@ -1114,7 +990,7 @@ function App() {
                   </span>
 
                   <strong>
-                    ₹{subtotal.toFixed(2)}
+                    â‚¹{subtotal.toFixed(2)}
                   </strong>
                 </div>
 
@@ -1259,7 +1135,7 @@ function App() {
                   Select your preferred size or option
                 </p>
               </div>
-              <button type="button" onClick={closeVariationModal} disabled={cartUpdating} aria-label="Close" style={{ width: "34px", height: "34px", flexShrink: 0, border: "1px solid rgba(255,255,255,0.1)", borderRadius: "50%", background: "#202023", color: "#bdbdc6", fontSize: "22px", cursor: "pointer" }}>×</button>
+              <button type="button" onClick={closeVariationModal} disabled={cartUpdating} aria-label="Close" style={{ width: "34px", height: "34px", flexShrink: 0, border: "1px solid rgba(255,255,255,0.1)", borderRadius: "50%", background: "#202023", color: "#bdbdc6", fontSize: "22px", cursor: "pointer" }}>Ã—</button>
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
@@ -1282,7 +1158,7 @@ function App() {
                       <span style={{ fontSize: "15px", fontWeight: 600 }}>{variation.name}</span>
                     </span>
                     <span style={{ fontSize: "15px", fontWeight: 700, whiteSpace: "nowrap" }}>
-                      ₹{Number(variation.price || 0).toFixed(2)}
+                      â‚¹{Number(variation.price || 0).toFixed(2)}
                     </span>
                   </button>
                 );
@@ -1307,3 +1183,4 @@ function App() {
 }
 
 export default App;
+

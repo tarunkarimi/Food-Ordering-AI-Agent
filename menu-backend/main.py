@@ -1,10 +1,15 @@
 import logging
+import os
 from typing import Any, Optional
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
+
+# ------------------------------------------------------------------
+# Logging
+# ------------------------------------------------------------------
 
 logging.basicConfig(
     level=logging.INFO,
@@ -14,12 +19,27 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# ------------------------------------------------------------------
+# Application configuration
+# ------------------------------------------------------------------
+
+PORT = int(os.getenv("PORT", "8000"))
+
+
+# ------------------------------------------------------------------
+# Application
+# ------------------------------------------------------------------
+
 app = FastAPI(
     title="Food Ordering Menu Backend",
-    description="Local development menu service for the Food Ordering AI Agent",
+    description="Menu and order service for the Food Ordering AI Agent",
     version="1.0.0",
 )
 
+
+# ------------------------------------------------------------------
+# Menu data
+# ------------------------------------------------------------------
 
 MENUS = {
     "test": {
@@ -98,10 +118,17 @@ MENUS = {
 }
 
 
+# ------------------------------------------------------------------
 # Local-development storage.
 # Replace this with a database in a deployed service.
+# ------------------------------------------------------------------
+
 ORDERS: dict[str, dict[str, Any]] = {}
 
+
+# ------------------------------------------------------------------
+# Request models
+# ------------------------------------------------------------------
 
 class OrderItemRequest(BaseModel):
     item_id: str
@@ -117,6 +144,10 @@ class OrderRequest(BaseModel):
     items: list[OrderItemRequest] = Field(min_length=1)
 
 
+# ------------------------------------------------------------------
+# Menu
+# ------------------------------------------------------------------
+
 @app.get("/")
 def get_menu(subdomain: str = Query(...)):
     """
@@ -130,6 +161,7 @@ def get_menu(subdomain: str = Query(...)):
             "Menu lookup failed: restaurant not found | subdomain=%s",
             subdomain,
         )
+
         raise HTTPException(
             status_code=404,
             detail=f"Restaurant '{subdomain}' not found",
@@ -148,6 +180,10 @@ def get_menu(subdomain: str = Query(...)):
     }
 
 
+# ------------------------------------------------------------------
+# Health
+# ------------------------------------------------------------------
+
 @app.get("/health")
 def health_check():
     return {
@@ -155,6 +191,10 @@ def health_check():
         "service": "menu-backend",
     }
 
+
+# ------------------------------------------------------------------
+# Orders
+# ------------------------------------------------------------------
 
 @app.post("/orders", status_code=201)
 def create_order(order: OrderRequest):
@@ -181,6 +221,7 @@ def create_order(order: OrderRequest):
             order.restaurant_name,
             order.subdomain,
         )
+
         raise HTTPException(
             status_code=400,
             detail="Restaurant or subdomain is invalid",
@@ -205,6 +246,7 @@ def create_order(order: OrderRequest):
                 "Order rejected: unknown item | item_id=%s",
                 submitted_item.item_id,
             )
+
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -218,6 +260,7 @@ def create_order(order: OrderRequest):
                 "Order rejected: item title mismatch | item_id=%s",
                 submitted_item.item_id,
             )
+
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -236,6 +279,7 @@ def create_order(order: OrderRequest):
                 "Invalid menu variation data | item_id=%s",
                 submitted_item.item_id,
             )
+
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -247,6 +291,7 @@ def create_order(order: OrderRequest):
         # ---------------------------------------------------------
         # Items WITH variations
         # ---------------------------------------------------------
+
         if menu_variations:
 
             if submitted_item.variation is None:
@@ -254,6 +299,7 @@ def create_order(order: OrderRequest):
                     "Order rejected: missing variation | item_id=%s",
                     submitted_item.item_id,
                 )
+
                 raise HTTPException(
                     status_code=400,
                     detail=(
@@ -270,6 +316,7 @@ def create_order(order: OrderRequest):
                     "Order rejected: invalid variation payload | item_id=%s",
                     submitted_item.item_id,
                 )
+
                 raise HTTPException(
                     status_code=400,
                     detail=(
@@ -287,6 +334,7 @@ def create_order(order: OrderRequest):
                     "Order rejected: missing variation ID | item_id=%s",
                     submitted_item.item_id,
                 )
+
                 raise HTTPException(
                     status_code=400,
                     detail=(
@@ -312,6 +360,7 @@ def create_order(order: OrderRequest):
                     submitted_item.item_id,
                     submitted_variation_id,
                 )
+
                 raise HTTPException(
                     status_code=400,
                     detail=(
@@ -339,6 +388,7 @@ def create_order(order: OrderRequest):
                     submitted_item.item_id,
                     submitted_variation_id,
                 )
+
                 raise HTTPException(
                     status_code=400,
                     detail=(
@@ -353,6 +403,7 @@ def create_order(order: OrderRequest):
                     submitted_item.item_id,
                     submitted_variation_id,
                 )
+
                 raise HTTPException(
                     status_code=400,
                     detail=(
@@ -361,11 +412,6 @@ def create_order(order: OrderRequest):
                     ),
                 )
 
-            # The submitted price is checked against
-            # the authoritative variation price.
-            # This prevents tampering while allowing
-            # numeric/string representations such as
-            # 280 and "280".
             try:
                 submitted_price = float(
                     submitted_item.base_price
@@ -378,6 +424,7 @@ def create_order(order: OrderRequest):
                     "Order rejected: invalid submitted price | item_id=%s",
                     submitted_item.item_id,
                 )
+
                 raise HTTPException(
                     status_code=400,
                     detail="Submitted item price is invalid",
@@ -391,6 +438,7 @@ def create_order(order: OrderRequest):
                     submitted_price,
                     authoritative_price,
                 )
+
                 raise HTTPException(
                     status_code=400,
                     detail=(
@@ -399,8 +447,6 @@ def create_order(order: OrderRequest):
                     ),
                 )
 
-            # Store the authoritative variation from
-            # the menu rather than trusting the client.
             authoritative_variation = {
                 "id": menu_variation["id"],
                 "name": str(
@@ -417,6 +463,7 @@ def create_order(order: OrderRequest):
         # ---------------------------------------------------------
         # Items WITHOUT variations
         # ---------------------------------------------------------
+
         else:
 
             if submitted_item.variation is not None:
@@ -424,6 +471,7 @@ def create_order(order: OrderRequest):
                     "Order rejected: variation supplied for non-variation item | item_id=%s",
                     submitted_item.item_id,
                 )
+
                 raise HTTPException(
                     status_code=400,
                     detail=(
@@ -444,6 +492,7 @@ def create_order(order: OrderRequest):
                     "Order rejected: invalid submitted price | item_id=%s",
                     submitted_item.item_id,
                 )
+
                 raise HTTPException(
                     status_code=400,
                     detail="Submitted item price is invalid",
@@ -460,6 +509,7 @@ def create_order(order: OrderRequest):
                     submitted_price,
                     authoritative_price,
                 )
+
                 raise HTTPException(
                     status_code=400,
                     detail=(
@@ -514,6 +564,10 @@ def create_order(order: OrderRequest):
     return created_order
 
 
+# ------------------------------------------------------------------
+# Order status
+# ------------------------------------------------------------------
+
 @app.get("/orders/{order_id}")
 def get_order(order_id: str):
     order = ORDERS.get(order_id)
@@ -523,6 +577,7 @@ def get_order(order_id: str):
             "Order lookup failed: order not found | order_id=%s",
             order_id,
         )
+
         raise HTTPException(
             status_code=404,
             detail="Order not found",
@@ -536,6 +591,10 @@ def get_order(order_id: str):
 
     return order
 
+
+# ------------------------------------------------------------------
+# Order cancellation
+# ------------------------------------------------------------------
 
 @app.delete("/orders/{order_id}")
 def cancel_order(order_id: str):
@@ -551,6 +610,7 @@ def cancel_order(order_id: str):
             "Order cancellation failed: order not found | order_id=%s",
             order_id,
         )
+
         raise HTTPException(
             status_code=404,
             detail="Order not found",
@@ -561,6 +621,7 @@ def cancel_order(order_id: str):
             "Order cancellation rejected: already cancelled | order_id=%s",
             order_id,
         )
+
         raise HTTPException(
             status_code=400,
             detail="Order is already cancelled",
@@ -574,3 +635,23 @@ def cancel_order(order_id: str):
     )
 
     return order
+
+
+# ------------------------------------------------------------------
+# Local development entry point
+# ------------------------------------------------------------------
+
+def main():
+    import uvicorn
+
+    logger.info("Starting menu backend on port %s", PORT)
+
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=PORT,
+    )
+
+
+if __name__ == "__main__":
+    main()

@@ -18,10 +18,11 @@ from src.agents.tools.order import cancel_order, get_order_status
 
 
 # Initialize the Gemini client once when the module is loaded.
-# Previously this was recreated on every chatbot graph execution.
 _model = ChatGoogleGenerativeAI(
     model="gemini-3.5-flash-lite",
     google_api_key=config.GOOGLE_API_KEY,
+    temperature=0,
+    max_retries=1,
 )
 
 # Keep the exact same tool set, but bind it once instead of once per request.
@@ -43,7 +44,6 @@ _model_with_tools = _model.bind_tools(_tools)
 def chatbot(state: OrderState) -> OrderState:
     """The chatbot itself. A wrapper around Gemini."""
 
-    # Format system instruction
     formatted_system_instruction = (
         SYSTEM_INSTRUCTION[0],
         SYSTEM_INSTRUCTION[1].format(
@@ -62,7 +62,6 @@ def chatbot(state: OrderState) -> OrderState:
     else:
         new_output = AIMessage(content=formatted_welcome_msg)
 
-    # Initialize cart if not present
     current_cart = state.get("cart")
 
     if current_cart is None or current_cart == []:

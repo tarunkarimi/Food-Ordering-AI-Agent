@@ -16,6 +16,34 @@ import "./App.css";
 const MENU_API = "/menu-api";
 const AI_API = "";
 
+const FRONTEND_REQUEST_TIMEOUT_MS = 15000;
+
+async function fetchWithTimeout(
+  url,
+  options = {},
+  timeoutMs = FRONTEND_REQUEST_TIMEOUT_MS
+) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    timeoutMs
+  );
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error("The request timed out. Please try again.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 function extractAssistantText(rawResponse) {
   if (!rawResponse) return "";
 
@@ -128,6 +156,8 @@ function App() {
   const [order, setOrder] = useState(null);
   const [placingOrder, setPlacingOrder] =
     useState(false);
+  const [cancellingOrder, setCancellingOrder] =
+    useState(false);
 
   const [sessionId] = useState(() => {
     const existingSession =
@@ -181,7 +211,7 @@ function App() {
       setLoadingMenu(true);
       setMenuError("");
 
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${MENU_API}/?subdomain=test`
       );
 
@@ -228,7 +258,7 @@ function App() {
 
   async function syncCartFromAI(currentSessionId) {
     try {
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `/api/chats/state?session_id=${encodeURIComponent(
           currentSessionId
         )}`
@@ -296,7 +326,7 @@ function App() {
     try {
       setCartUpdating(true);
 
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `/api/chats/cart/${endpoint}`,
         {
           method: "POST",
@@ -423,7 +453,7 @@ function App() {
     try {
       setCartUpdating(true);
 
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         "/api/chats/cart/clear",
         {
           method: "POST",
@@ -488,7 +518,7 @@ function App() {
     try {
       setSending(true);
 
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${AI_API}/api/chats/orders`,
         {
           method: "POST",
@@ -503,7 +533,8 @@ function App() {
               restaurant,
             subdomain: "test",
           }),
-        }
+        },
+        60000
       );
 
       const rawResponse =
@@ -525,8 +556,6 @@ function App() {
           rawResponse
         );
 
-      await syncCartFromAI(sessionId);
-
       setMessages((previous) => [
         ...previous,
         {
@@ -536,6 +565,10 @@ function App() {
             "I received your request, but I couldn't format the AI response.",
         },
       ]);
+
+      // Do not make the user wait for the extra state round trip
+      // before seeing the AI response.
+      void syncCartFromAI(sessionId);
     } catch (error) {
       console.error(
         "AI request error:",
@@ -566,7 +599,7 @@ function App() {
     try {
       setPlacingOrder(true);
 
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${MENU_API}/orders`,
         {
           method: "POST",
@@ -609,9 +642,9 @@ function App() {
 
       setOrder(data);
 
-      // Keep the LangGraph cart in sync
-      // after a successful manual checkout.
-      await clearCart();
+      // The order is already confirmed by the menu backend.
+      // Keep LangGraph in sync without delaying the confirmation UI.
+      void clearCart();
 
       setMessages((previous) => [
         ...previous,
@@ -641,10 +674,12 @@ function App() {
   }
 
   async function cancelOrder() {
-    if (!order) return;
+    if (!order || cancellingOrder) return;
 
     try {
-      const response = await fetch(
+      setCancellingOrder(true);
+
+      const response = await fetchWithTimeout(
         `${MENU_API}/orders/${order.order_id}`,
         {
           method: "DELETE",
@@ -683,6 +718,8 @@ function App() {
           content: `I couldn't cancel the order: ${error.message}`,
         },
       ]);
+    } finally {
+      setCancellingOrder(false);
     }
   }
 
@@ -1080,8 +1117,19 @@ function App() {
                 <button
                   className="cancel-order"
                   onClick={cancelOrder}
+                  disabled={cancellingOrder}
                 >
-                  Cancel Order
+                  {cancellingOrder ? (
+                    <>
+                      <Loader2
+                        className="spin"
+                        size={16}
+                      />
+                      Cancelling...
+                    </>
+                  ) : (
+                    "Cancel Order"
+                  )}
                 </button>
               )}
             </section>
@@ -1183,4 +1231,3 @@ function App() {
 }
 
 export default App;
-

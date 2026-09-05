@@ -4,6 +4,7 @@ from typing import Any, Optional
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 
@@ -34,6 +35,26 @@ app = FastAPI(
     title="Food Ordering Menu Backend",
     description="Menu and order service for the Food Ordering AI Agent",
     version="1.0.0",
+)
+
+
+# Allow the deployed frontend and local development frontend to call this API.
+# Render can override FRONTEND_ORIGINS with a comma-separated list.
+FRONTEND_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "FRONTEND_ORIGINS",
+        "http://localhost:5173,https://food-ordering-frontend-odsb.onrender.com",
+    ).split(",")
+    if origin.strip()
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=FRONTEND_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 

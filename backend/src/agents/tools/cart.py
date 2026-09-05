@@ -378,6 +378,12 @@ def add_cart(
         update={
             "cart": updated_cart,
             "order_confirmation_pending": False,
+
+            # Starting a new cart begins a new active-order lifecycle.
+            # Keep the previous orderId/order_status available for status
+            # lookups, but allow this new cart to be placed as a new order.
+            "finished": False,
+
             "messages": [
                 ToolMessage(
                     f"Added {title} to cart",
@@ -398,18 +404,33 @@ def remove_from_cart(
 ):
     """
     Removes an item from the cart.
+
+    For variation-based items, the exact variation ID is used
+    to determine which cart unit should be removed.
     """
 
+    # ---------------------------------------------------------
+    # 1. Validate quantity
+    # ---------------------------------------------------------
     if not _valid_quantity(new_item.quantity):
         return _failure(
             "Quantity must be greater than zero.",
             tool_call_id
         )
 
-    # Handle variation ID safely.
+    # ---------------------------------------------------------
+    # 2. Handle variation ID safely
+    # ---------------------------------------------------------
     variation_id = "no_variant"
 
-    if new_item.variation:
+    if new_item.variation is not None:
+
+        if not new_item.variation.id:
+            return _failure(
+                "A valid variation ID is required.",
+                tool_call_id
+            )
+
         variation_id = new_item.variation.id.strip()
 
         if not variation_id:
@@ -420,115 +441,104 @@ def remove_from_cart(
 
     item_key = f"{item_id}|{variation_id}"
 
-    current_cart = state["cart"]
+    # ---------------------------------------------------------
+    # 3. Get current cart
+    # ---------------------------------------------------------
+    current_cart = state.get("cart")
 
     if current_cart is None or not current_cart.items:
-
-        return Command(
-            update={
-                "messages": [
-                    ToolMessage(
-                        f"Cart is empty. Cannot remove {title}.",
-                        tool_call_id=tool_call_id
-                    )
-                ]
-            }
+        return _failure(
+            f"Item {title} not found in cart.",
+            tool_call_id
         )
 
+    # ---------------------------------------------------------
+    # 4. Remove requested quantity
+    # ---------------------------------------------------------
     updated_items = []
     item_found = False
-    removal_message = f"Item {title} not found in cart."
 
     for existing_item in current_cart.items:
 
-        if existing_item.item_id == item_id:
+        if existing_item.item_id != item_id:
 
-            unit_found = False
-            updated_units = []
+            updated_items.append(existing_item)
+            continue
 
-            for existing_unit in existing_item.units:
+        unit_found = False
+        updated_units = []
 
-                if existing_unit.key == item_key:
+        for existing_unit in existing_item.units:
 
-                    unit_found = True
+            if existing_unit.key != item_key:
 
-                    if existing_unit.quantity > new_item.quantity:
+                updated_units.append(existing_unit)
+                continue
 
-                        updated_units.append(
-                            CartItemUnit(
-                                key=existing_unit.key,
-                                quantity=(
-                                    existing_unit.quantity
-                                    - new_item.quantity
-                                ),
-                                base_price=existing_unit.base_price,
-                                variation=existing_unit.variation
-                            )
-                        )
+            unit_found = True
 
-                        removal_message = (
-                            f"Reduced {title} quantity "
-                            f"by {new_item.quantity}"
-                        )
+            if existing_unit.quantity > new_item.quantity:
 
-                    elif existing_unit.quantity == new_item.quantity:
-
-                        removal_message = (
-                            f"Removed {title} from cart"
-                        )
-
-                    else:
-
-                        updated_units.append(existing_unit)
-
-                        removal_message = (
-                            f"Cannot remove {new_item.quantity} "
-                            f"{title}. Only "
-                            f"{existing_unit.quantity} available."
-                        )
-
-                else:
-
-                    updated_units.append(existing_unit)
-
-            if unit_found:
-
-                item_found = True
-
-                if updated_units:
-
-                    updated_items.append(
-                        CartItem(
-                            item_id=existing_item.item_id,
-                            title=existing_item.title,
-                            units=updated_units
-                        )
+                updated_units.append(
+                    CartItemUnit(
+                        key=existing_unit.key,
+                        quantity=(
+                            existing_unit.quantity
+                            - new_item.quantity
+                        ),
+                        base_price=existing_unit.base_price,
+                        variation=existing_unit.variation
                     )
+                )
+
+            elif existing_unit.quantity == new_item.quantity:
+
+                # Remove this variation completely.
+                pass
 
             else:
 
-                updated_items.append(existing_item)
+                # Do not remove more than exists.
+                updated_units.append(existing_unit)
 
-                removal_message = (
-                    f"Variant of {title} not found in cart."
+        if unit_found:
+            item_found = True
+
+        if updated_units:
+
+            updated_items.append(
+                CartItem(
+                    item_id=existing_item.item_id,
+                    title=existing_item.title,
+                    units=updated_units
                 )
+            )
 
-        else:
+        elif not unit_found:
 
             updated_items.append(existing_item)
 
+    # ---------------------------------------------------------
+    # 5. Validate that requested item existed
+    # ---------------------------------------------------------
     if not item_found:
-        updated_cart = current_cart
-    else:
-        updated_cart = Cart(items=updated_items)
+        return _failure(
+            f"Item {title} not found in cart.",
+            tool_call_id
+        )
+
+    updated_cart = Cart(
+        items=updated_items
+    )
 
     return Command(
         update={
             "cart": updated_cart,
             "order_confirmation_pending": False,
+            "finished": False,
             "messages": [
                 ToolMessage(
-                    removal_message,
+                    f"Removed {title} from cart",
                     tool_call_id=tool_call_id
                 )
             ]
@@ -541,12 +551,13 @@ def clear_cart(
     tool_call_id: Annotated[str, InjectedToolCallId],
     state: Annotated[OrderState, InjectedState]
 ):
-    """Clear all items from the customer's cart."""
+    """Clear all items from the current cart."""
 
     return Command(
         update={
             "cart": Cart(items=[]),
             "order_confirmation_pending": False,
+            "finished": False,
             "messages": [
                 ToolMessage(
                     "Cart cleared successfully.",
@@ -562,29 +573,63 @@ def confirm_order(
     tool_call_id: Annotated[str, InjectedToolCallId],
     state: Annotated[OrderState, InjectedState],
 ):
-    """Show the current cart summary before placing an order."""
+    """
+    Prepare the current cart for final customer confirmation.
+
+    This tool does NOT place the order.
+    """
 
     cart = state.get("cart")
 
     if cart is None or not cart.items:
+
         return _failure(
-            "Cart is empty. Add items before placing an order.",
+            "Cannot confirm an empty cart. Please add items first.",
             tool_call_id
         )
 
     item_lines = []
     total = 0.0
 
-    for item in cart.items:
+    try:
 
-        for unit in item.units:
+        for item in cart.items:
 
-            line_total = unit.quantity * unit.base_price
-            total += line_total
+            for unit in item.units:
 
-            item_lines.append(
-                f"- {item.title} × {unit.quantity} — ₹{line_total:g}"
-            )
+                if (
+                    not _valid_quantity(unit.quantity)
+                    or not _valid_price(unit.base_price)
+                ):
+                    raise ValueError(
+                        "Cart contains invalid quantity or price."
+                    )
+
+                line_total = (
+                    unit.quantity
+                    * unit.base_price
+                )
+
+                total += line_total
+
+                variation_text = ""
+
+                if unit.variation is not None:
+                    variation_text = (
+                        f" ({unit.variation.name})"
+                    )
+
+                item_lines.append(
+                    f"- {item.title}{variation_text} "
+                    f"× {unit.quantity} — ₹{line_total:g}"
+                )
+
+    except (AttributeError, TypeError, ValueError):
+
+        return _failure(
+            "Cannot confirm the order because the cart contains invalid items.",
+            tool_call_id
+        )
 
     return Command(
         update={
@@ -612,16 +657,17 @@ def get_cart(
 @tool
 def place_order(
     tool_call_id: Annotated[str, InjectedToolCallId],
-    state: Annotated[OrderState, InjectedState]
+    state: Annotated[OrderState, InjectedState],
 ):
-    """Place the order and complete the ordering process."""
+    """
+    Place the current cart order after explicit customer confirmation.
+    """
 
-    current_cart = state["cart"]
+    current_cart = state.get("cart")
 
-    # Never allow an order to be placed until the chatbot has
-    # explicitly called confirm_order for the current cart AND
-    # the customer has explicitly confirmed the order in a
-    # subsequent human message.
+    # ---------------------------------------------------------
+    # 1. Require confirm_order
+    # ---------------------------------------------------------
     if not state.get("order_confirmation_pending", False):
         return _failure(
             "Order confirmation is required before placing the order. "
@@ -629,18 +675,24 @@ def place_order(
             tool_call_id
         )
 
+    # ---------------------------------------------------------
+    # 2. Require an explicit human confirmation message
+    #
     # A model can otherwise call confirm_order and place_order
-    # consecutively in the same graph turn. That would bypass the
-    # human confirmation boundary. Require the latest human message
-    # to be an explicit affirmative response.
+    # consecutively in the same graph turn. Require the latest
+    # human message to be an explicit affirmative response.
+    # ---------------------------------------------------------
     latest_human_message = None
 
     for message in reversed(state.get("messages", [])):
+
         if isinstance(message, HumanMessage):
+
             latest_human_message = message
             break
 
     if latest_human_message is None:
+
         return _failure(
             "Please explicitly confirm the order before placing it.",
             tool_call_id
@@ -675,21 +727,19 @@ def place_order(
     }
 
     if confirmation_text not in affirmative_responses:
+
         return _failure(
             "Please explicitly confirm the order before placing it.",
             tool_call_id
         )
 
-    if (
-        state.get("orderId")
-        and state.get("order_status") == "confirmed"
-    ):
-        return _failure(
-            "An order is already confirmed for this session. "
-            "Check or cancel it before placing another order.",
-            tool_call_id
-        )
-
+    # ---------------------------------------------------------
+    # 3. Validate current cart
+    #
+    # We intentionally do NOT block based on an old orderId.
+    # A previous confirmed order can remain available for status
+    # lookup while a newly populated cart starts a new order.
+    # ---------------------------------------------------------
     if current_cart is None or not current_cart.items:
 
         return Command(
@@ -704,6 +754,9 @@ def place_order(
             }
         )
 
+    # ---------------------------------------------------------
+    # 4. Build authoritative order items
+    # ---------------------------------------------------------
     order_items = []
 
     try:
@@ -752,6 +805,9 @@ def place_order(
             tool_call_id
         )
 
+    # ---------------------------------------------------------
+    # 5. Send order to menu backend
+    # ---------------------------------------------------------
     order_url = (
         f"{config.MENU_BACKEND_URL.rstrip('/')}/orders"
     )
@@ -828,8 +884,9 @@ def place_order(
     else:
 
         total_items = sum(
-            item["quantity"]
-            for item in order_items
+            unit.quantity
+            for item in current_cart.items
+            for unit in item.units
         )
 
         return Command(
@@ -851,7 +908,9 @@ def place_order(
             }
         )
 
-    # On every API failure, deliberately omit cart/order state updates.
+    # ---------------------------------------------------------
+    # 6. Return API failure without corrupting existing state
+    # ---------------------------------------------------------
     return Command(
         update={
             "messages": [

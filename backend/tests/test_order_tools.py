@@ -14,7 +14,12 @@ def confirmed_state():
 
 
 def place(state):
-    return run_tool(state, "place_order", {}, "test-place-order")
+    return run_tool(
+        state,
+        "place_order",
+        {},
+        "test-place-order",
+    )
 
 
 def response(status_code=201, payload=None):
@@ -33,14 +38,94 @@ def response(status_code=201, payload=None):
     return result
 
 
+def test_place_order_requires_confirmation_pending_state():
+    state = make_state(make_cart())
+    state["order_confirmation_pending"] = False
+    state["messages"] = [HumanMessage(content="yes")]
+
+    with patch(
+        "src.agents.tools.cart.requests.post"
+    ) as post:
+        result = place(state)
+
+    post.assert_not_called()
+
+    assert len(result["cart"].items) == 1
+    assert result["orderId"] is None
+    assert result["finished"] is False
+    assert result["order_confirmation_pending"] is False
+
+
+def test_place_order_rejects_non_affirmative_latest_confirmation():
+    state = confirmed_state()
+    state["messages"] = [
+        HumanMessage(content="yes"),
+        HumanMessage(content="no"),
+    ]
+
+    with patch(
+        "src.agents.tools.cart.requests.post"
+    ) as post:
+        result = place(state)
+
+    post.assert_not_called()
+
+    assert len(result["cart"].items) == 1
+    assert result["orderId"] is None
+    assert result["finished"] is False
+    assert result["order_confirmation_pending"] is True
+
+
+def test_place_order_accepts_explicit_confirm_order_response():
+    state = confirmed_state()
+    state["messages"] = [
+        HumanMessage(content="confirm order")
+    ]
+
+    with patch(
+        "src.agents.tools.cart.requests.post",
+        return_value=response(),
+    ) as post:
+        result = place(state)
+
+    post.assert_called_once()
+
+    assert result["orderId"] == "ORD-123"
+    assert result["finished"] is True
+    assert result["order_confirmation_pending"] is False
+
+
+def test_place_order_does_not_use_stale_affirmative_confirmation():
+    state = confirmed_state()
+    state["messages"] = [
+        HumanMessage(content="yes"),
+        HumanMessage(content="Actually, wait"),
+    ]
+
+    with patch(
+        "src.agents.tools.cart.requests.post"
+    ) as post:
+        result = place(state)
+
+    post.assert_not_called()
+
+    assert len(result["cart"].items) == 1
+    assert result["orderId"] is None
+    assert result["finished"] is False
+    assert result["order_confirmation_pending"] is True
+
+
 def test_empty_cart_cannot_place_order():
     state = confirmed_state()
     state["cart"].items = []
 
-    with patch("src.agents.tools.cart.requests.post") as post:
+    with patch(
+        "src.agents.tools.cart.requests.post"
+    ) as post:
         result = place(state)
 
     post.assert_not_called()
+
     assert result["cart"].items == []
     assert result["orderId"] is None
     assert result["finished"] is False
@@ -56,6 +141,7 @@ def test_successful_order_placement_clears_cart_and_sets_completion():
         result = place(state)
 
     post.assert_called_once()
+
     assert result["cart"].items == []
     assert result["orderId"] == "ORD-123"
     assert result["order_status"] == "confirmed"

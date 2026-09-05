@@ -23,20 +23,32 @@ from src.configs.config import config
 
 
 def _load_menu_backend():
-    main_path = Path(__file__).resolve().parents[2] / "menu-backend" / "main.py"
+    main_path = (
+        Path(__file__).resolve().parents[2]
+        / "menu-backend"
+        / "main.py"
+    )
+
     spec = importlib.util.spec_from_file_location(
         "integration_menu_backend",
         main_path,
     )
+
     module = importlib.util.module_from_spec(spec)
+
     assert spec.loader is not None
+
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
+
     return module
 
 
 def _available_port():
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    with socket.socket(
+        socket.AF_INET,
+        socket.SOCK_STREAM,
+    ) as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
 
@@ -61,23 +73,29 @@ def menu_backend(monkeypatch):
         target=server.run,
         daemon=True,
     )
+
     thread.start()
 
     base_url = f"http://127.0.0.1:{port}"
 
     for _ in range(50):
         try:
-            if requests.get(
-                f"{base_url}/health",
-                timeout=0.1,
-            ).status_code == 200:
+            if (
+                requests.get(
+                    f"{base_url}/health",
+                    timeout=0.1,
+                ).status_code
+                == 200
+            ):
                 break
         except requests.ConnectionError:
             time.sleep(0.05)
     else:
         server.should_exit = True
         thread.join(timeout=2)
-        pytest.fail("Menu backend did not start")
+        pytest.fail(
+            "Menu backend did not start"
+        )
 
     monkeypatch.setattr(
         config,
@@ -102,10 +120,18 @@ def tool_graph():
     return graph.compile()
 
 
-def invoke_tool(graph, state, name, args, tool_call_id):
+def invoke_tool(
+    graph,
+    state,
+    name,
+    args,
+    tool_call_id,
+):
     state = dict(state)
 
-    state["messages"] = list(state.get("messages", [])) + [
+    state["messages"] = list(
+        state.get("messages", [])
+    ) + [
         AIMessage(
             content="",
             tool_calls=[
@@ -135,7 +161,10 @@ def initial_state():
     }
 
 
-def test_order_lifecycle_over_real_menu_backend(menu_backend, tool_graph):
+def test_order_lifecycle_over_real_menu_backend(
+    menu_backend,
+    tool_graph,
+):
     state = initial_state()
 
     # 1. The agent's registered add_cart tool builds the cart.
@@ -158,18 +187,21 @@ def test_order_lifecycle_over_real_menu_backend(menu_backend, tool_graph):
                 },
             },
         },
-        "add-item",
+        "add-regular",
     )
 
     assert len(state["cart"].items) == 1
     assert state["cart"].items[0].units[0].quantity == 2
     assert state["cart"].items[0].units[0].variation is not None
-    assert state["cart"].items[0].units[0].variation.id == "regular"
+    assert (
+        state["cart"].items[0].units[0].variation.id
+        == "regular"
+    )
 
     # 2. Explicit customer confirmation is required before placement.
     state["order_confirmation_pending"] = True
     state["messages"] = [
-        HumanMessage(content="yes"),
+        HumanMessage(content="yes")
     ]
 
     # 3. place_order sends an actual POST to the running menu backend.
@@ -183,11 +215,14 @@ def test_order_lifecycle_over_real_menu_backend(menu_backend, tool_graph):
 
     order_id = state["orderId"]
 
-    assert order_id and order_id.startswith("ORD-")
+    assert order_id
+    assert order_id.startswith("ORD-")
     assert state["order_status"] == "confirmed"
     assert state["cart"].items == []
     assert state["finished"] is True
-    assert state["order_confirmation_pending"] is False
+    assert (
+        state["order_confirmation_pending"] is False
+    )
 
     # 4. Status lookup fetches the same persisted order through an actual GET.
     state_before_status = dict(state)
@@ -200,10 +235,22 @@ def test_order_lifecycle_over_real_menu_backend(menu_backend, tool_graph):
         "confirmed-status",
     )
 
-    assert "is confirmed." in state["messages"][-1].content
-    assert state["cart"] == state_before_status["cart"]
-    assert state["orderId"] == state_before_status["orderId"]
-    assert state["finished"] is state_before_status["finished"]
+    assert (
+        "is confirmed."
+        in state["messages"][-1].content
+    )
+    assert (
+        state["cart"]
+        == state_before_status["cart"]
+    )
+    assert (
+        state["orderId"]
+        == state_before_status["orderId"]
+    )
+    assert (
+        state["finished"]
+        is state_before_status["finished"]
+    )
 
     # 5. Cancellation sends an actual DELETE and changes only lifecycle status.
     state_before_cancel = dict(state)
@@ -219,7 +266,10 @@ def test_order_lifecycle_over_real_menu_backend(menu_backend, tool_graph):
     assert state["order_status"] == "cancelled"
     assert state["cart"] == state_before_cancel["cart"]
     assert state["orderId"] == order_id
-    assert state["finished"] is state_before_cancel["finished"]
+    assert (
+        state["finished"]
+        is state_before_cancel["finished"]
+    )
 
     # 6. The persisted order remains retrievable and reports cancelled status.
     state = invoke_tool(
@@ -231,10 +281,15 @@ def test_order_lifecycle_over_real_menu_backend(menu_backend, tool_graph):
     )
 
     assert (
-        "Order " + order_id + " is cancelled."
+        "Order "
+        + order_id
+        + " is cancelled."
         in state["messages"][-1].content
     )
-    assert "Status: cancelled" in state["messages"][-1].content
+    assert (
+        "Status: cancelled"
+        in state["messages"][-1].content
+    )
 
     # 7. A real backend 404 must not alter the existing lifecycle state.
     before_missing_cancel = dict(state)
@@ -253,8 +308,120 @@ def test_order_lifecycle_over_real_menu_backend(menu_backend, tool_graph):
         state["messages"][-1],
         ToolMessage,
     )
-    assert "was not found" in state["messages"][-1].content
-    assert state["cart"] == before_missing_cancel["cart"]
-    assert state["orderId"] == before_missing_cancel["orderId"]
-    assert state["order_status"] == before_missing_cancel["order_status"]
-    assert state["finished"] is before_missing_cancel["finished"]
+    assert (
+        "was not found"
+        in state["messages"][-1].content
+    )
+    assert (
+        state["cart"]
+        == before_missing_cancel["cart"]
+    )
+    assert (
+        state["orderId"]
+        == before_missing_cancel["orderId"]
+    )
+    assert (
+        state["order_status"]
+        == before_missing_cancel["order_status"]
+    )
+    assert (
+        state["finished"]
+        is before_missing_cancel["finished"]
+    )
+
+
+def test_new_order_can_be_placed_after_completed_order(
+    menu_backend,
+    tool_graph,
+):
+    state = initial_state()
+
+    # First order.
+    state = invoke_tool(
+        tool_graph,
+        state,
+        "add_cart",
+        {
+            "item_id": "item-001",
+            "title": "Chicken Biryani",
+            "new_item": {
+                "key": "item-001|large",
+                "quantity": 1,
+                "base_price": 280.0,
+                "variation": {
+                    "id": "large",
+                    "name": "Large",
+                    "price": "280",
+                },
+            },
+        },
+        "first-add",
+    )
+
+    state["order_confirmation_pending"] = True
+    state["messages"] = [
+        HumanMessage(content="yes")
+    ]
+
+    state = invoke_tool(
+        tool_graph,
+        state,
+        "place_order",
+        {},
+        "first-place",
+    )
+
+    first_order_id = state["orderId"]
+
+    assert first_order_id
+    assert state["finished"] is True
+    assert state["cart"].items == []
+
+    # Starting a new cart must reopen the active-order lifecycle.
+    state = invoke_tool(
+        tool_graph,
+        state,
+        "add_cart",
+        {
+            "item_id": "item-003",
+            "title": "Masala Dosa",
+            "new_item": {
+                "key": "item-003|no_variant",
+                "quantity": 1,
+                "base_price": 100.0,
+            },
+        },
+        "second-add",
+    )
+
+    assert state["finished"] is False
+    assert len(state["cart"].items) == 1
+    assert (
+        state["cart"].items[0].item_id
+        == "item-003"
+    )
+
+    # Confirm and place the second order.
+    state["order_confirmation_pending"] = True
+    state["messages"] = [
+        HumanMessage(content="yes")
+    ]
+
+    state = invoke_tool(
+        tool_graph,
+        state,
+        "place_order",
+        {},
+        "second-place",
+    )
+
+    second_order_id = state["orderId"]
+
+    assert second_order_id
+    assert second_order_id != first_order_id
+    assert state["order_status"] == "confirmed"
+    assert state["cart"].items == []
+    assert state["finished"] is True
+    assert (
+        state["order_confirmation_pending"] is False
+    )

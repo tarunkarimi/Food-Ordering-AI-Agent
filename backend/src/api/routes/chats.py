@@ -75,9 +75,33 @@ class ManualCartRequest(BaseModel):
     quantity: int = Field(
         default=1,
         gt=0,
-        description="Quantity to add or remove.",
+        description="Quantity to add.",
     )
     variation_id: Optional[str] = None
+
+
+class ManualCartItemRequest(BaseModel):
+    session_id: str = Field(
+        ...,
+        min_length=1,
+        description="Conversation session identifier.",
+    )
+    item_id: Optional[str] = None
+    title: Optional[str] = None
+    quantity: int = Field(
+        default=1,
+        gt=0,
+        description="Quantity to remove.",
+    )
+    variation_id: Optional[str] = None
+
+
+class ClearCartRequest(BaseModel):
+    session_id: str = Field(
+        ...,
+        min_length=1,
+        description="Conversation session identifier.",
+    )
 
 
 # ------------------------------------------------------------------
@@ -506,7 +530,7 @@ def manual_add_to_cart(request: ManualCartRequest):
 # ------------------------------------------------------------------
 
 @router.post("/cart/remove")
-def manual_remove_from_cart(request: ManualCartRequest):
+def manual_remove_from_cart(request: ManualCartItemRequest):
     try:
         if not request.session_id.strip():
             raise ValueError("session_id is missing.")
@@ -565,7 +589,7 @@ def manual_remove_from_cart(request: ManualCartRequest):
 # ------------------------------------------------------------------
 
 @router.post("/cart/clear")
-def manual_clear_cart(request: ManualCartRequest):
+def manual_clear_cart(request: ClearCartRequest):
     try:
         if not request.session_id.strip():
             raise ValueError("session_id is missing.")

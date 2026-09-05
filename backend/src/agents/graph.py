@@ -22,12 +22,11 @@ def chatbot_agent_builder():
 
     graph.add_edge(START, NODE_CHATBOT)
 
-    # tools will always return back to chatbot
+    # Tool execution returns to chatbot so the model can continue
+    # reasoning when another model turn is actually required.
     graph.add_edge(NODE_TOOLS, NODE_CHATBOT)
     graph.add_conditional_edges(NODE_CHATBOT, tools_condition)
 
-    # Explicitly allow only the application's custom state classes
-    # during LangGraph checkpoint deserialization.
     serializer = JsonPlusSerializer(
         allowed_msgpack_modules=[
             ("src.agents.state", "ItemVariation"),

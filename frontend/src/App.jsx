@@ -116,7 +116,7 @@ function App() {
     {
       role: "assistant",
       content:
-        "Namaste! ðŸ™ I'm your AI food assistant. Ask me about the menu or tell me what you'd like to order.",
+        "Namaste! 🙏 I'm your AI food assistant. Ask me about the menu or tell me what you'd like to order.",
     },
   ]);
 
@@ -617,7 +617,7 @@ function App() {
         ...previous,
         {
           role: "assistant",
-          content: `Your order ${data.order_id} has been confirmed! ðŸŽ‰ Your subtotal is â‚¹${Number(
+          content: `Your order ${data.order_id} has been confirmed! 🎉 Your subtotal is ₹${Number(
             data.subtotal || 0
           ).toFixed(2)}.`,
         },
@@ -751,7 +751,7 @@ function App() {
                   key={item.id}
                 >
                   <div className="food-image">
-                    ðŸ²
+                    🍲
                   </div>
 
                   <div className="food-info">
@@ -765,12 +765,12 @@ function App() {
                     <div className="food-bottom">
                       <strong>
                         {getItemVariations(item).length > 0
-                          ? `From â‚¹${Number(
+                          ? `From ₹${Number(
                               getItemVariations(item)[0]?.price ||
                                 item.base_price ||
                                 0
                             ).toFixed(2)}`
-                          : `â‚¹${getItemPrice(item).toFixed(2)}`}
+                          : `₹${getItemPrice(item).toFixed(2)}`}
                       </strong>
 
                       <button
@@ -806,7 +806,7 @@ function App() {
                 </h3>
 
                 <span>
-                  Online â€¢ Ready to order
+                  Online • Ready to order
                 </span>
               </div>
             </div>
@@ -925,11 +925,11 @@ function App() {
                         )}
 
                         <span>
-                          â‚¹{Number(
+                          ₹{Number(
                             item.base_price ||
                               0
                           ).toFixed(2)}{" "}
-                          Ã—{" "}
+                          ×{" "}
                           {item.quantity}
                         </span>
                       </div>
@@ -990,7 +990,7 @@ function App() {
                   </span>
 
                   <strong>
-                    â‚¹{subtotal.toFixed(2)}
+                    ₹{subtotal.toFixed(2)}
                   </strong>
                 </div>
 
@@ -1135,7 +1135,7 @@ function App() {
                   Select your preferred size or option
                 </p>
               </div>
-              <button type="button" onClick={closeVariationModal} disabled={cartUpdating} aria-label="Close" style={{ width: "34px", height: "34px", flexShrink: 0, border: "1px solid rgba(255,255,255,0.1)", borderRadius: "50%", background: "#202023", color: "#bdbdc6", fontSize: "22px", cursor: "pointer" }}>Ã—</button>
+              <button type="button" onClick={closeVariationModal} disabled={cartUpdating} aria-label="Close" style={{ width: "34px", height: "34px", flexShrink: 0, border: "1px solid rgba(255,255,255,0.1)", borderRadius: "50%", background: "#202023", color: "#bdbdc6", fontSize: "22px", cursor: "pointer" }}>×</button>
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
@@ -1158,7 +1158,7 @@ function App() {
                       <span style={{ fontSize: "15px", fontWeight: 600 }}>{variation.name}</span>
                     </span>
                     <span style={{ fontSize: "15px", fontWeight: 700, whiteSpace: "nowrap" }}>
-                      â‚¹{Number(variation.price || 0).toFixed(2)}
+                      ₹{Number(variation.price || 0).toFixed(2)}
                     </span>
                   </button>
                 );

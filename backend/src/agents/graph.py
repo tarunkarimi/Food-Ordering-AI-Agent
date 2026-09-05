@@ -8,6 +8,7 @@ from src.agents.nodes.chatbot import chatbot
 from src.agents.nodes.tool_node import tool_node
 from langgraph.prebuilt import tools_condition
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
 
 def chatbot_agent_builder():
@@ -25,8 +26,18 @@ def chatbot_agent_builder():
     graph.add_edge(NODE_TOOLS, NODE_CHATBOT)
     graph.add_conditional_edges(NODE_CHATBOT, tools_condition)
 
-    memory = MemorySaver()
+    # Explicitly allow only the application's custom state classes
+    # during LangGraph checkpoint deserialization.
+    serializer = JsonPlusSerializer(
+        allowed_msgpack_modules=[
+            ("src.agents.state", "ItemVariation"),
+            ("src.agents.state", "CartItemUnit"),
+            ("src.agents.state", "CartItem"),
+            ("src.agents.state", "Cart"),
+        ],
+    )
+
+    memory = MemorySaver(serde=serializer)
     chatbot_graph = graph.compile(checkpointer=memory)
 
     return chatbot_graph
-

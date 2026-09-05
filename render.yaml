@@ -1,0 +1,56 @@
+﻿services:
+
+  - type: web
+    runtime: python
+    name: food-ordering-ai-backend
+    rootDir: backend
+    region: singapore
+    plan: free
+    buildCommand: uv sync --frozen --no-dev --no-install-project
+    startCommand: uv run --no-sync uvicorn src.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: MENU_BACKEND_URL
+        fromService:
+          type: web
+          name: food-ordering-menu-backend
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: FRONTEND_ORIGINS
+        fromService:
+          type: web
+          name: food-ordering-frontend
+          envVarKey: RENDER_EXTERNAL_URL
+
+  - type: web
+    runtime: python
+    name: food-ordering-menu-backend
+    rootDir: menu-backend
+    region: singapore
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+
+  - type: web
+    runtime: static
+    name: food-ordering-frontend
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_AI_API_URL
+        fromService:
+          type: web
+          name: food-ordering-ai-backend
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: VITE_MENU_API_URL
+        fromService:
+          type: web
+          name: food-ordering-menu-backend
+          envVarKey: RENDER_EXTERNAL_URL
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

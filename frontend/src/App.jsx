@@ -13,8 +13,8 @@ import {
 } from "lucide-react";
 import "./App.css";
 
-const MENU_API = "/menu-api";
-const AI_API = "";
+const MENU_API = import.meta.env.VITE_MENU_API_URL || "/menu-api";
+const AI_API = import.meta.env.VITE_AI_API_URL || "";
 
 const FRONTEND_REQUEST_TIMEOUT_MS = 15000;
 
@@ -259,7 +259,7 @@ function App() {
   async function syncCartFromAI(currentSessionId) {
     try {
       const response = await fetchWithTimeout(
-        `/api/chats/state?session_id=${encodeURIComponent(
+        `${AI_API}/api/chats/state?session_id=${encodeURIComponent(
           currentSessionId
         )}`
       );
@@ -327,7 +327,7 @@ function App() {
       setCartUpdating(true);
 
       const response = await fetchWithTimeout(
-        `/api/chats/cart/${endpoint}`,
+        `${AI_API}/api/chats/cart/${endpoint}`,
         {
           method: "POST",
           headers: {
@@ -454,7 +454,7 @@ function App() {
       setCartUpdating(true);
 
       const response = await fetchWithTimeout(
-        "/api/chats/cart/clear",
+        `${AI_API}/api/chats/cart/clear`,
         {
           method: "POST",
           headers: {

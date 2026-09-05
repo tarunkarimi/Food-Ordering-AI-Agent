@@ -1,8 +1,17 @@
+import logging
 from typing import Any, Optional
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+
+logger = logging.getLogger(__name__)
 
 
 app = FastAPI(
@@ -117,10 +126,20 @@ def get_menu(subdomain: str = Query(...)):
     menu = MENUS.get(subdomain)
 
     if menu is None:
+        logger.warning(
+            "Menu lookup failed: restaurant not found | subdomain=%s",
+            subdomain,
+        )
         raise HTTPException(
             status_code=404,
             detail=f"Restaurant '{subdomain}' not found",
         )
+
+    logger.info(
+        "Menu requested | subdomain=%s | item_count=%s",
+        subdomain,
+        len(menu["items"]),
+    )
 
     return {
         "restaurant_name": menu["restaurant_name"],
@@ -147,9 +166,21 @@ def create_order(order: OrderRequest):
     Client-submitted prices are never trusted.
     """
 
+    logger.info(
+        "Order creation requested | restaurant=%s | subdomain=%s | item_count=%s",
+        order.restaurant_name,
+        order.subdomain,
+        len(order.items),
+    )
+
     menu = MENUS.get(order.subdomain)
 
     if menu is None or menu["restaurant_name"] != order.restaurant_name:
+        logger.warning(
+            "Order rejected: invalid restaurant or subdomain | restaurant=%s | subdomain=%s",
+            order.restaurant_name,
+            order.subdomain,
+        )
         raise HTTPException(
             status_code=400,
             detail="Restaurant or subdomain is invalid",
@@ -170,6 +201,10 @@ def create_order(order: OrderRequest):
         )
 
         if menu_item is None:
+            logger.warning(
+                "Order rejected: unknown item | item_id=%s",
+                submitted_item.item_id,
+            )
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -179,6 +214,10 @@ def create_order(order: OrderRequest):
             )
 
         if submitted_item.title != menu_item["title"]:
+            logger.warning(
+                "Order rejected: item title mismatch | item_id=%s",
+                submitted_item.item_id,
+            )
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -193,6 +232,10 @@ def create_order(order: OrderRequest):
         )
 
         if not isinstance(menu_variations, list):
+            logger.error(
+                "Invalid menu variation data | item_id=%s",
+                submitted_item.item_id,
+            )
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -207,6 +250,10 @@ def create_order(order: OrderRequest):
         if menu_variations:
 
             if submitted_item.variation is None:
+                logger.warning(
+                    "Order rejected: missing variation | item_id=%s",
+                    submitted_item.item_id,
+                )
                 raise HTTPException(
                     status_code=400,
                     detail=(
@@ -219,6 +266,10 @@ def create_order(order: OrderRequest):
                 submitted_item.variation,
                 dict,
             ):
+                logger.warning(
+                    "Order rejected: invalid variation payload | item_id=%s",
+                    submitted_item.item_id,
+                )
                 raise HTTPException(
                     status_code=400,
                     detail=(
@@ -232,6 +283,10 @@ def create_order(order: OrderRequest):
             )
 
             if not submitted_variation_id:
+                logger.warning(
+                    "Order rejected: missing variation ID | item_id=%s",
+                    submitted_item.item_id,
+                )
                 raise HTTPException(
                     status_code=400,
                     detail=(
@@ -252,6 +307,11 @@ def create_order(order: OrderRequest):
             )
 
             if menu_variation is None:
+                logger.warning(
+                    "Order rejected: unavailable variation | item_id=%s | variation_id=%s",
+                    submitted_item.item_id,
+                    submitted_variation_id,
+                )
                 raise HTTPException(
                     status_code=400,
                     detail=(
@@ -274,6 +334,11 @@ def create_order(order: OrderRequest):
                 TypeError,
                 ValueError,
             ):
+                logger.error(
+                    "Invalid variation pricing in menu | item_id=%s | variation_id=%s",
+                    submitted_item.item_id,
+                    submitted_variation_id,
+                )
                 raise HTTPException(
                     status_code=400,
                     detail=(
@@ -283,6 +348,11 @@ def create_order(order: OrderRequest):
                 )
 
             if authoritative_price < 0:
+                logger.error(
+                    "Negative variation pricing in menu | item_id=%s | variation_id=%s",
+                    submitted_item.item_id,
+                    submitted_variation_id,
+                )
                 raise HTTPException(
                     status_code=400,
                     detail=(
@@ -304,12 +374,23 @@ def create_order(order: OrderRequest):
                 TypeError,
                 ValueError,
             ):
+                logger.warning(
+                    "Order rejected: invalid submitted price | item_id=%s",
+                    submitted_item.item_id,
+                )
                 raise HTTPException(
                     status_code=400,
                     detail="Submitted item price is invalid",
                 )
 
             if submitted_price != authoritative_price:
+                logger.warning(
+                    "Order rejected: price mismatch | item_id=%s | variation_id=%s | submitted=%s | authoritative=%s",
+                    submitted_item.item_id,
+                    submitted_variation_id,
+                    submitted_price,
+                    authoritative_price,
+                )
                 raise HTTPException(
                     status_code=400,
                     detail=(
@@ -339,6 +420,10 @@ def create_order(order: OrderRequest):
         else:
 
             if submitted_item.variation is not None:
+                logger.warning(
+                    "Order rejected: variation supplied for non-variation item | item_id=%s",
+                    submitted_item.item_id,
+                )
                 raise HTTPException(
                     status_code=400,
                     detail=(
@@ -355,6 +440,10 @@ def create_order(order: OrderRequest):
                 TypeError,
                 ValueError,
             ):
+                logger.warning(
+                    "Order rejected: invalid submitted price | item_id=%s",
+                    submitted_item.item_id,
+                )
                 raise HTTPException(
                     status_code=400,
                     detail="Submitted item price is invalid",
@@ -365,6 +454,12 @@ def create_order(order: OrderRequest):
             )
 
             if submitted_price != authoritative_price:
+                logger.warning(
+                    "Order rejected: price mismatch | item_id=%s | submitted=%s | authoritative=%s",
+                    submitted_item.item_id,
+                    submitted_price,
+                    authoritative_price,
+                )
                 raise HTTPException(
                     status_code=400,
                     detail=(
@@ -409,6 +504,13 @@ def create_order(order: OrderRequest):
 
     ORDERS[order_id] = created_order
 
+    logger.info(
+        "Order created successfully | order_id=%s | subtotal=%.2f | item_count=%s",
+        order_id,
+        subtotal,
+        len(confirmed_items),
+    )
+
     return created_order
 
 
@@ -417,10 +519,20 @@ def get_order(order_id: str):
     order = ORDERS.get(order_id)
 
     if order is None:
+        logger.warning(
+            "Order lookup failed: order not found | order_id=%s",
+            order_id,
+        )
         raise HTTPException(
             status_code=404,
             detail="Order not found",
         )
+
+    logger.info(
+        "Order retrieved | order_id=%s | status=%s",
+        order_id,
+        order["status"],
+    )
 
     return order
 
@@ -435,17 +547,30 @@ def cancel_order(order_id: str):
     order = ORDERS.get(order_id)
 
     if order is None:
+        logger.warning(
+            "Order cancellation failed: order not found | order_id=%s",
+            order_id,
+        )
         raise HTTPException(
             status_code=404,
             detail="Order not found",
         )
 
     if order["status"] == "cancelled":
+        logger.warning(
+            "Order cancellation rejected: already cancelled | order_id=%s",
+            order_id,
+        )
         raise HTTPException(
             status_code=400,
             detail="Order is already cancelled",
         )
 
     order["status"] = "cancelled"
+
+    logger.info(
+        "Order cancelled | order_id=%s",
+        order_id,
+    )
 
     return order

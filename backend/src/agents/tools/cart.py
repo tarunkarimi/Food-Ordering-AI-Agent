@@ -2,7 +2,7 @@ import requests
 from src.configs.config import config
 from langchain_core.tools import tool, InjectedToolCallId
 from langgraph.types import Command
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 from typing import Annotated
 from src.agents.state import (
     CartItemUnit,
@@ -234,16 +234,34 @@ def add_cart(
 
         variation_id = requested_variation_id
 
+        raw_variation_price = menu_variation.get(
+            "price",
+            authoritative_price
+        )
+
+        try:
+            variation_price = float(raw_variation_price)
+        except (TypeError, ValueError):
+            return _failure(
+                "That item variation has invalid pricing on the current menu.",
+                tool_call_id
+            )
+
+        if not _valid_price(variation_price):
+            return _failure(
+                "That item variation has invalid pricing on the current menu.",
+                tool_call_id
+            )
+
         valid_variation = ItemVariation(
             id=menu_variation["id"],
             name=str(menu_variation.get("name", "")),
-            price=str(
-                menu_variation.get(
-                    "price",
-                    authoritative_price
-                )
-            )
+            price=str(raw_variation_price)
         )
+
+        # IMPORTANT:
+        # The selected variation price is the actual cart unit price.
+        authoritative_price = variation_price
 
     # ---------------------------------------------------------
     # 6. Create deterministic cart key
@@ -305,8 +323,10 @@ def add_cart(
                                     existing_unit.quantity
                                     + new_item.quantity
                                 ),
-                                base_price=existing_unit.base_price,
-                                variation=existing_unit.variation
+                                # Use the authoritative current price and
+                                # variation from the menu.
+                                base_price=updated_unit.base_price,
+                                variation=updated_unit.variation
                             )
                         )
 
@@ -597,6 +617,68 @@ def place_order(
     """Place the order and complete the ordering process."""
 
     current_cart = state["cart"]
+
+    # Never allow an order to be placed until the chatbot has
+    # explicitly called confirm_order for the current cart AND
+    # the customer has explicitly confirmed the order in a
+    # subsequent human message.
+    if not state.get("order_confirmation_pending", False):
+        return _failure(
+            "Order confirmation is required before placing the order. "
+            "Please review and confirm the cart first.",
+            tool_call_id
+        )
+
+    # A model can otherwise call confirm_order and place_order
+    # consecutively in the same graph turn. That would bypass the
+    # human confirmation boundary. Require the latest human message
+    # to be an explicit affirmative response.
+    latest_human_message = None
+
+    for message in reversed(state.get("messages", [])):
+        if isinstance(message, HumanMessage):
+            latest_human_message = message
+            break
+
+    if latest_human_message is None:
+        return _failure(
+            "Please explicitly confirm the order before placing it.",
+            tool_call_id
+        )
+
+    confirmation_text = (
+        latest_human_message.content
+        if isinstance(latest_human_message.content, str)
+        else str(latest_human_message.content)
+    ).strip().lower()
+
+    affirmative_responses = {
+        "yes",
+        "yes please",
+        "yes, please",
+        "confirm",
+        "confirm order",
+        "confirmed",
+        "place order",
+        "place the order",
+        "go ahead",
+        "go ahead and place it",
+        "proceed",
+        "proceed with the order",
+        "i confirm",
+        "i confirm the order",
+        "looks good",
+        "looks good, place it",
+        "that's correct",
+        "that is correct",
+        "correct",
+    }
+
+    if confirmation_text not in affirmative_responses:
+        return _failure(
+            "Please explicitly confirm the order before placing it.",
+            tool_call_id
+        )
 
     if (
         state.get("orderId")

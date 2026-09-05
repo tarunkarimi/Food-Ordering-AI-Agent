@@ -40,16 +40,30 @@ def _apply_result(state: dict[str, Any], result: Any) -> list[Any]:
     if isinstance(result, Command):
         update = result.update or {}
         if isinstance(update, dict):
-            for key in ("cart", "orderId", "order_status", "finished"):
+            for key in (
+                "cart",
+                "orderId",
+                "order_status",
+                "order_confirmation_pending",
+                "finished",
+            ):
                 if key in update:
                     state[key] = update[key]
+
             messages.extend(update.get("messages", []))
         return messages
 
     if isinstance(result, dict):
-        for key in ("cart", "orderId", "order_status", "finished"):
+        for key in (
+            "cart",
+            "orderId",
+            "order_status",
+            "order_confirmation_pending",
+            "finished",
+        ):
             if key in result:
                 state[key] = result[key]
+
         messages.extend(result.get("messages", []))
         return messages
 
@@ -74,10 +88,12 @@ def tool_node(state, config=None):
     InjectedState/InjectedToolCallId behavior.
     """
     messages = state.get("messages", [])
+
     if not messages:
         return {}
 
     last_message = messages[-1]
+
     if not isinstance(last_message, AIMessage) or not last_message.tool_calls:
         return {}
 
@@ -93,8 +109,15 @@ def tool_node(state, config=None):
 
         working_state["messages"] = working_messages + [single_call_message]
 
-        result = _single_tool_node.invoke(working_state, config=config)
-        produced_messages = _apply_result(working_state, result)
+        result = _single_tool_node.invoke(
+            working_state,
+            config=config,
+        )
+
+        produced_messages = _apply_result(
+            working_state,
+            result,
+        )
 
         new_tool_messages.extend(produced_messages)
         working_messages.extend(produced_messages)
@@ -104,5 +127,9 @@ def tool_node(state, config=None):
         "cart": working_state.get("cart"),
         "orderId": working_state.get("orderId"),
         "order_status": working_state.get("order_status"),
+        "order_confirmation_pending": working_state.get(
+            "order_confirmation_pending",
+            False,
+        ),
         "finished": working_state.get("finished", False),
     }

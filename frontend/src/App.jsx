@@ -13,7 +13,6 @@ import {
 } from "lucide-react";
 import "./App.css";
 
-// Use Vite's local proxy to avoid browser CORS problems.
 const MENU_API = "/menu-api";
 const AI_API = "";
 
@@ -21,11 +20,6 @@ function extractAssistantText(rawResponse) {
   if (!rawResponse) return "";
 
   const raw = String(rawResponse).trim();
-
-  // Backend returns SSE:
-  // data: {"type":"AIMessage","content":"[{'type':'text','text':'...'}]"}
-  // data: [DONE]
-
   const lines = raw.split(/\r?\n/);
 
   for (const line of lines) {
@@ -35,15 +29,12 @@ function extractAssistantText(rawResponse) {
 
     if (!payload || payload === "[DONE]") continue;
 
-    // Parse the outer JSON object.
     try {
       const outer = JSON.parse(payload);
 
       if (typeof outer.content === "string") {
         const content = outer.content;
 
-        // Extract the inner text value from:
-        // [{'type': 'text', 'text': "...", 'extras': {...}}]
         const match = content.match(
           /['"]text['"]\s*:\s*(["'])([\s\S]*?)\1\s*,\s*['"]extras['"]\s*:/
         );
@@ -52,7 +43,6 @@ function extractAssistantText(rawResponse) {
           return decodeEscapedText(match[2]).trim();
         }
 
-        // Fallback for a content string that is already plain text.
         if (
           !content.startsWith("[") &&
           !content.startsWith("{")
@@ -61,7 +51,6 @@ function extractAssistantText(rawResponse) {
         }
       }
 
-      // Other normal response formats.
       if (typeof outer.text === "string") {
         return outer.text.trim();
       }
@@ -70,11 +59,10 @@ function extractAssistantText(rawResponse) {
         return outer.message.trim();
       }
     } catch {
-      // Continue to the next SSE line.
+      // Continue.
     }
   }
 
-  // Fallback: try the whole response as JSON.
   try {
     const parsed = JSON.parse(raw);
 
@@ -115,8 +103,6 @@ function readQuotedValue(source, start, quote) {
       continue;
     }
 
-    // Python repr commonly contains apostrophes inside a double-quoted
-    // string or escaped apostrophes inside a single-quoted string.
     if (char === quote) {
       const rest = source.slice(i + 1);
 
@@ -137,24 +123,27 @@ function readQuotedValue(source, start, quote) {
 function extractTextFromValue(value) {
   if (value === null || value === undefined) return "";
 
-  // Direct string
   if (typeof value === "string") {
     const text = value.trim();
+
     if (!text) return "";
 
-    // The AI backend can return content like:
-    // "[{'type': 'text', 'text': 'Namaste! Welcome to Test Restaurant...'}]"
-    //
-    // Extract the nested "text" value instead of displaying the
-    // complete Python-style representation.
-    const textKeyMatch = text.match(/['"]text['"]\s*:\s*(['"])/);
+    const textKeyMatch = text.match(
+      /['"]text['"]\s*:\s*(['"])/
+    );
 
     if (textKeyMatch) {
       const quote = textKeyMatch[1];
-      const valueStart =
-        textKeyMatch.index + textKeyMatch[0].length;
 
-      const extracted = readQuotedValue(text, valueStart, quote);
+      const valueStart =
+        textKeyMatch.index +
+        textKeyMatch[0].length;
+
+      const extracted = readQuotedValue(
+        text,
+        valueStart,
+        quote
+      );
 
       if (extracted) {
         return decodeEscapedText(extracted).trim();
@@ -164,20 +153,18 @@ function extractTextFromValue(value) {
     return text;
   }
 
-  // Array of message/content objects
   if (Array.isArray(value)) {
     for (const item of value) {
-      const extracted = extractTextFromValue(item);
+      const extracted =
+        extractTextFromValue(item);
+
       if (extracted) return extracted;
     }
 
     return "";
   }
 
-  // Object response
   if (typeof value === "object") {
-    // Example:
-    // { type: "text", text: "Namaste!" }
     if (
       value.type === "text" &&
       typeof value.text === "string" &&
@@ -186,24 +173,33 @@ function extractTextFromValue(value) {
       return value.text.trim();
     }
 
-    // AIMessage:
-    // {
-    //   type: "AIMessage",
-    //   content: "[{'type': 'text', 'text': '...'}]"
-    // }
-    if (typeof value.content === "string" && value.content.trim()) {
-      const extracted = extractTextFromValue(value.content);
+    if (
+      typeof value.content === "string" &&
+      value.content.trim()
+    ) {
+      const extracted =
+        extractTextFromValue(value.content);
+
       if (extracted) return extracted;
     }
 
     if (Array.isArray(value.content)) {
-      const extracted = extractTextFromValue(value.content);
+      const extracted =
+        extractTextFromValue(value.content);
+
       if (extracted) return extracted;
     }
 
-    // Other possible response formats
-    for (const key of ["text", "message", "response", "answer"]) {
-      if (typeof value[key] === "string" && value[key].trim()) {
+    for (const key of [
+      "text",
+      "message",
+      "response",
+      "answer",
+    ]) {
+      if (
+        typeof value[key] === "string" &&
+        value[key].trim()
+      ) {
         return value[key].trim();
       }
     }
@@ -216,7 +212,9 @@ function decodeEscapedText(text) {
   if (!text) return "";
 
   try {
-    return JSON.parse(`"${text.replace(/"/g, '\\"')}"`);
+    return JSON.parse(
+      `"${text.replace(/"/g, '\\"')}"`
+    );
   } catch {
     return text
       .replace(/\\n/g, "\n")
@@ -228,11 +226,15 @@ function decodeEscapedText(text) {
 
 function App() {
   const [menu, setMenu] = useState([]);
-  const [restaurant, setRestaurant] = useState("Test Restaurant");
-  const [loadingMenu, setLoadingMenu] = useState(true);
+  const [restaurant, setRestaurant] =
+    useState("Test Restaurant");
+  const [loadingMenu, setLoadingMenu] =
+    useState(true);
   const [menuError, setMenuError] = useState("");
 
   const [cart, setCart] = useState([]);
+  const [variationModalItem, setVariationModalItem] = useState(null);
+  const [variationModalSelection, setVariationModalSelection] = useState(null);
 
   const [messages, setMessages] = useState([
     {
@@ -244,14 +246,38 @@ function App() {
 
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [cartUpdating, setCartUpdating] =
+    useState(false);
 
   const [order, setOrder] = useState(null);
-  const [placingOrder, setPlacingOrder] = useState(false);
+  const [placingOrder, setPlacingOrder] =
+    useState(false);
+
+  const [sessionId] = useState(() => {
+    const existingSession =
+      localStorage.getItem(
+        "food_agent_session"
+      );
+
+    if (existingSession) {
+      return existingSession;
+    }
+
+    const newSession = crypto.randomUUID();
+
+    localStorage.setItem(
+      "food_agent_session",
+      newSession
+    );
+
+    return newSession;
+  });
 
   const cartItemCount = useMemo(
     () =>
       cart.reduce(
-        (total, item) => total + Number(item.quantity || 0),
+        (total, item) =>
+          total + Number(item.quantity || 0),
         0
       ),
     [cart]
@@ -262,7 +288,8 @@ function App() {
       cart.reduce(
         (total, item) =>
           total +
-          Number(item.base_price || 0) * Number(item.quantity || 0),
+          Number(item.base_price || 0) *
+            Number(item.quantity || 0),
         0
       ),
     [cart]
@@ -270,17 +297,22 @@ function App() {
 
   useEffect(() => {
     loadMenu();
-  }, []);
+    syncCartFromAI(sessionId);
+  }, [sessionId]);
 
   async function loadMenu() {
     try {
       setLoadingMenu(true);
       setMenuError("");
 
-      const response = await fetch(`${MENU_API}/?subdomain=test`);
+      const response = await fetch(
+        `${MENU_API}/?subdomain=test`
+      );
 
       if (!response.ok) {
-        throw new Error(`Menu service returned ${response.status}`);
+        throw new Error(
+          `Menu service returned ${response.status}`
+        );
       }
 
       const data = await response.json();
@@ -294,14 +326,21 @@ function App() {
       setMenu(items);
 
       if (data?.restaurant_name) {
-        setRestaurant(data.restaurant_name);
+        setRestaurant(
+          data.restaurant_name
+        );
       }
 
       if (!items.length) {
-        setMenuError("The restaurant returned an empty menu.");
+        setMenuError(
+          "The restaurant returned an empty menu."
+        );
       }
     } catch (error) {
-      console.error("Menu loading error:", error);
+      console.error(
+        "Menu loading error:",
+        error
+      );
 
       setMenuError(
         "Could not load the restaurant menu. Check that the menu backend is running on port 8000."
@@ -311,93 +350,245 @@ function App() {
     }
   }
 
-  function addToCart(item) {
-    setCart((previous) => {
-      const existing = previous.find(
-        (cartItem) => cartItem.id === item.id
-      );
-
-      if (existing) {
-        return previous.map((cartItem) =>
-          cartItem.id === item.id
-            ? {
-                ...cartItem,
-                quantity: cartItem.quantity + 1,
-              }
-            : cartItem
-        );
-      }
-
-      return [
-        ...previous,
-        {
-          ...item,
-          quantity: 1,
-        },
-      ];
-    });
-  }
-
-  function decreaseQuantity(itemId) {
-    setCart((previous) =>
-      previous
-        .map((item) =>
-          item.id === itemId
-            ? {
-                ...item,
-                quantity: item.quantity - 1,
-              }
-            : item
-        )
-        .filter((item) => item.quantity > 0)
-    );
-  }
-
-  function removeFromCart(itemId) {
-    setCart((previous) =>
-      previous.filter((item) => item.id !== itemId)
-    );
-  }
-
-  // Sync the React cart with the authoritative cart stored
-  // in the AI/LangGraph backend.
-  async function syncCartFromAI(sessionId) {
+  async function syncCartFromAI(currentSessionId) {
     try {
       const response = await fetch(
-        `/api/chats/state?session_id=${encodeURIComponent(sessionId)}`
+        `/api/chats/state?session_id=${encodeURIComponent(
+          currentSessionId
+        )}`
       );
 
       if (!response.ok) {
-        throw new Error(`State request failed: ${response.status}`);
+        throw new Error(
+          `State request failed: ${response.status}`
+        );
       }
 
       const data = await response.json();
 
       const backendCart = data?.[0]?.cart;
 
-      if (!backendCart || !Array.isArray(backendCart.items)) {
+      if (
+        !backendCart ||
+        !Array.isArray(backendCart.items)
+      ) {
         setCart([]);
         return;
       }
 
-      const syncedCart = backendCart.items.flatMap((item) =>
-        (item.units || []).map((unit) => ({
-          id: unit.key || item.item_id,
-          item_id: item.item_id,
-          title: item.title,
-          quantity: Number(unit.quantity || 0),
-          base_price: Number(unit.base_price || 0),
-          variation: unit.variation || null,
-        }))
-      );
+      const syncedCart =
+        backendCart.items.flatMap(
+          (item) =>
+            (item.units || []).map(
+              (unit) => ({
+                id:
+                  unit.key ||
+                  item.item_id,
+                item_id: item.item_id,
+                title: item.title,
+                quantity: Number(
+                  unit.quantity || 0
+                ),
+                base_price: Number(
+                  unit.base_price || 0
+                ),
+                variation:
+                  unit.variation || null,
+              })
+            )
+        );
 
       setCart(
         syncedCart.filter(
-          (item) => item.quantity > 0
+          (item) =>
+            item.quantity > 0
         )
       );
     } catch (error) {
-      console.error("Cart sync error:", error);
+      console.error(
+        "Cart sync error:",
+        error
+      );
+    }
+  }
+
+  async function manualCartRequest(
+    endpoint,
+    item,
+    quantity = 1
+  ) {
+    try {
+      setCartUpdating(true);
+
+      const response = await fetch(
+        `/api/chats/cart/${endpoint}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+          body: JSON.stringify({
+            session_id: sessionId,
+            restaurant_name:
+              restaurant,
+            subdomain: "test",
+            item_id:
+              item?.item_id ||
+              item?.id ||
+              null,
+            title:
+              item?.title || null,
+            quantity,
+            variation_id:
+              item?.variation?.id ||
+              null,
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.detail ||
+            "Cart update failed"
+        );
+      }
+
+      await syncCartFromAI(sessionId);
+    } catch (error) {
+      console.error(
+        "Manual cart update error:",
+        error
+      );
+
+      setMessages((previous) => [
+        ...previous,
+        {
+          role: "assistant",
+          content: `I couldn't update your cart: ${error.message}`,
+        },
+      ]);
+    } finally {
+      setCartUpdating(false);
+    }
+  }
+
+  function getItemVariations(item) {
+    return Array.isArray(item?.variations)
+      ? item.variations
+      : [];
+  }
+
+  function getItemPrice(item) {
+    if (item?.variation?.price !== undefined) {
+      return Number(item.variation.price || 0);
+    }
+
+    return Number(item?.base_price || 0);
+  }
+
+  function openVariationModal(item) {
+    const variations = getItemVariations(item);
+
+    if (!variations.length) {
+      addToCart(item);
+      return;
+    }
+
+    setVariationModalItem(item);
+    setVariationModalSelection(variations[0] || null);
+  }
+
+  function closeVariationModal() {
+    if (cartUpdating) return;
+    setVariationModalItem(null);
+    setVariationModalSelection(null);
+  }
+
+  async function confirmVariationAdd() {
+    if (!variationModalItem || !variationModalSelection) return;
+
+    const item = variationModalItem;
+    const variation = variationModalSelection;
+
+    setVariationModalItem(null);
+    setVariationModalSelection(null);
+
+    await addToCart({ ...item, variation });
+  }
+
+  async function addToCart(item) {
+    await manualCartRequest(
+      "add",
+      item,
+      1
+    );
+  }
+
+  async function decreaseQuantity(item) {
+    await manualCartRequest(
+      "remove",
+      item,
+      1
+    );
+  }
+
+  async function removeFromCart(item) {
+    await manualCartRequest(
+      "remove",
+      item,
+      Number(item.quantity || 1)
+    );
+  }
+
+  async function clearCart() {
+    try {
+      setCartUpdating(true);
+
+      const response = await fetch(
+        "/api/chats/cart/clear",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+          body: JSON.stringify({
+            session_id: sessionId,
+            restaurant_name:
+              restaurant,
+            subdomain: "test",
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.detail ||
+            "Unable to clear cart"
+        );
+      }
+
+      await syncCartFromAI(sessionId);
+    } catch (error) {
+      console.error(
+        "Clear cart error:",
+        error
+      );
+
+      setMessages((previous) => [
+        ...previous,
+        {
+          role: "assistant",
+          content: `I couldn't clear your cart: ${error.message}`,
+        },
+      ]);
+    } finally {
+      setCartUpdating(false);
     }
   }
 
@@ -421,32 +612,26 @@ function App() {
     try {
       setSending(true);
 
-      const sessionId =
-        localStorage.getItem("food_agent_session") ||
-        crypto.randomUUID();
-
-      localStorage.setItem(
-        "food_agent_session",
-        sessionId
-      );
-
       const response = await fetch(
         `${AI_API}/api/chats/orders`,
         {
           method: "POST",
           headers: {
-            "Content-Type": "application/json",
+            "Content-Type":
+              "application/json",
           },
           body: JSON.stringify({
             user_message: message,
             session_id: sessionId,
-            restaurant_name: restaurant,
+            restaurant_name:
+              restaurant,
             subdomain: "test",
           }),
         }
       );
 
-      const rawResponse = await response.text();
+      const rawResponse =
+        await response.text();
 
       console.log(
         "AI raw response:",
@@ -460,10 +645,10 @@ function App() {
       }
 
       const assistantText =
-        extractAssistantText(rawResponse);
+        extractAssistantText(
+          rawResponse
+        );
 
-      // Get the authoritative cart from the AI backend
-      // after the AI has processed the user's message.
       await syncCartFromAI(sessionId);
 
       setMessages((previous) => [
@@ -495,7 +680,12 @@ function App() {
   }
 
   async function placeOrder() {
-    if (cart.length === 0 || placingOrder) return;
+    if (
+      cart.length === 0 ||
+      placingOrder
+    ) {
+      return;
+    }
 
     try {
       setPlacingOrder(true);
@@ -505,32 +695,47 @@ function App() {
         {
           method: "POST",
           headers: {
-            "Content-Type": "application/json",
+            "Content-Type":
+              "application/json",
           },
           body: JSON.stringify({
-            restaurant_name: restaurant,
+            restaurant_name:
+              restaurant,
             subdomain: "test",
-            items: cart.map((item) => ({
-              item_id: item.item_id || item.id,
-              title: item.title,
-              quantity: item.quantity,
-              base_price: item.base_price,
-              variation: item.variation || null,
-            })),
+            items: cart.map(
+              (item) => ({
+                item_id:
+                  item.item_id ||
+                  item.id,
+                title: item.title,
+                quantity:
+                  item.quantity,
+                base_price:
+                  item.base_price,
+                variation:
+                  item.variation ||
+                  null,
+              })
+            ),
           }),
         }
       );
 
-      const data = await response.json();
+      const data =
+        await response.json();
 
       if (!response.ok) {
         throw new Error(
-          data.detail || "Order failed"
+          data.detail ||
+            "Order failed"
         );
       }
 
       setOrder(data);
-      setCart([]);
+
+      // Keep the LangGraph cart in sync
+      // after a successful manual checkout.
+      await clearCart();
 
       setMessages((previous) => [
         ...previous,
@@ -570,11 +775,13 @@ function App() {
         }
       );
 
-      const data = await response.json();
+      const data =
+        await response.json();
 
       if (!response.ok) {
         throw new Error(
-          data.detail || "Cancellation failed"
+          data.detail ||
+            "Cancellation failed"
         );
       }
 
@@ -604,7 +811,8 @@ function App() {
   }
 
   return (
-    <div className="app">
+    <>
+      <div className="app">
       <header className="topbar">
         <div className="brand">
           <div className="brand-icon">
@@ -613,7 +821,9 @@ function App() {
 
           <div>
             <h1>FoodAI</h1>
-            <span>AI-powered food ordering</span>
+            <span>
+              AI-powered food ordering
+            </span>
           </div>
         </div>
 
@@ -678,16 +888,22 @@ function App() {
 
                     <div className="food-bottom">
                       <strong>
-                        ₹
-                        {Number(
-                          item.base_price || 0
-                        ).toFixed(2)}
+                        {getItemVariations(item).length > 0
+                          ? `From ₹${Number(
+                              getItemVariations(item)[0]?.price ||
+                                item.base_price ||
+                                0
+                            ).toFixed(2)}`
+                          : `₹${getItemPrice(item).toFixed(2)}`}
                       </strong>
 
                       <button
                         className="add-button"
                         onClick={() =>
-                          addToCart(item)
+                          openVariationModal(item)
+                        }
+                        disabled={
+                          cartUpdating
                         }
                       >
                         <Plus size={17} />
@@ -725,7 +941,8 @@ function App() {
                   <div
                     key={index}
                     className={`message ${
-                      message.role === "user"
+                      message.role ===
+                      "user"
                         ? "user-message"
                         : "ai-message"
                     }`}
@@ -751,7 +968,9 @@ function App() {
               <input
                 value={input}
                 onChange={(event) =>
-                  setInput(event.target.value)
+                  setInput(
+                    event.target.value
+                  )
                 }
                 placeholder="Ask me what you'd like..."
                 disabled={sending}
@@ -760,7 +979,8 @@ function App() {
               <button
                 type="submit"
                 disabled={
-                  !input.trim() || sending
+                  !input.trim() ||
+                  sending
                 }
                 aria-label="Send message"
               >
@@ -784,7 +1004,9 @@ function App() {
                 </p>
 
                 <h3>
-                  <ShoppingCart size={19} />
+                  <ShoppingCart
+                    size={19}
+                  />
                   Cart
                 </h3>
               </div>
@@ -820,21 +1042,31 @@ function App() {
                           {item.title}
                         </strong>
 
+                        {item.variation?.name && (
+                          <span>
+                            {item.variation.name}
+                          </span>
+                        )}
+
                         <span>
-                          ₹
-                          {Number(
-                            item.base_price || 0
+                          ₹{Number(
+                            item.base_price ||
+                              0
                           ).toFixed(2)}{" "}
-                          × {item.quantity}
+                          ×{" "}
+                          {item.quantity}
                         </span>
                       </div>
 
                       <div className="quantity-controls">
                         <button
                           type="button"
+                          disabled={
+                            cartUpdating
+                          }
                           onClick={() =>
                             decreaseQuantity(
-                              item.id
+                              item
                             )
                           }
                         >
@@ -847,6 +1079,9 @@ function App() {
 
                         <button
                           type="button"
+                          disabled={
+                            cartUpdating
+                          }
                           onClick={() =>
                             addToCart(item)
                           }
@@ -857,9 +1092,12 @@ function App() {
                         <button
                           type="button"
                           className="delete-button"
+                          disabled={
+                            cartUpdating
+                          }
                           onClick={() =>
                             removeFromCart(
-                              item.id
+                              item
                             )
                           }
                         >
@@ -883,7 +1121,10 @@ function App() {
                 <button
                   className="checkout-button"
                   onClick={placeOrder}
-                  disabled={placingOrder}
+                  disabled={
+                    placingOrder ||
+                    cartUpdating
+                  }
                 >
                   {placingOrder ? (
                     <>
@@ -902,6 +1143,28 @@ function App() {
                     </>
                   )}
                 </button>
+
+                <button
+                  type="button"
+                  className="cancel-order"
+                  onClick={clearCart}
+                  disabled={
+                    cartUpdating ||
+                    placingOrder
+                  }
+                >
+                  {cartUpdating ? (
+                    <>
+                      <Loader2
+                        className="spin"
+                        size={16}
+                      />
+                      Updating...
+                    </>
+                  ) : (
+                    "Clear Cart"
+                  )}
+                </button>
               </>
             )}
           </section>
@@ -909,7 +1172,8 @@ function App() {
           {order && (
             <section
               className={`order-status ${
-                order.status === "cancelled"
+                order.status ===
+                "cancelled"
                   ? "cancelled"
                   : ""
               }`}
@@ -948,7 +1212,97 @@ function App() {
           )}
         </aside>
       </main>
-    </div>
+      </div>
+
+      {variationModalItem && (
+        <div
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeVariationModal();
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 1000,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "20px",
+            background: "rgba(0,0,0,0.72)",
+            backdropFilter: "blur(5px)",
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="variation-modal-title"
+            style={{
+              width: "100%",
+              maxWidth: "430px",
+              maxHeight: "90vh",
+              overflowY: "auto",
+              background: "#151518",
+              border: "1px solid rgba(255,255,255,0.1)",
+              borderRadius: "20px",
+              boxShadow: "0 24px 80px rgba(0,0,0,0.55)",
+              padding: "24px",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "16px", marginBottom: "20px" }}>
+              <div>
+                <div style={{ fontSize: "12px", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "#9b55ff", marginBottom: "7px" }}>
+                  Choose an option
+                </div>
+                <h3 id="variation-modal-title" style={{ margin: 0, fontSize: "22px", color: "#fff" }}>
+                  {variationModalItem.title}
+                </h3>
+                <p style={{ margin: "7px 0 0", color: "#92929b", fontSize: "13px" }}>
+                  Select your preferred size or option
+                </p>
+              </div>
+              <button type="button" onClick={closeVariationModal} disabled={cartUpdating} aria-label="Close" style={{ width: "34px", height: "34px", flexShrink: 0, border: "1px solid rgba(255,255,255,0.1)", borderRadius: "50%", background: "#202023", color: "#bdbdc6", fontSize: "22px", cursor: "pointer" }}>×</button>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              {getItemVariations(variationModalItem).map((variation) => {
+                const selected = variationModalSelection?.id === variation.id;
+                return (
+                  <button
+                    key={variation.id}
+                    type="button"
+                    onClick={() => setVariationModalSelection(variation)}
+                    disabled={cartUpdating}
+                    style={{
+                      width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "16px", padding: "15px 16px", borderRadius: "14px",
+                      border: selected ? "1px solid #8b3dff" : "1px solid rgba(255,255,255,0.09)",
+                      background: selected ? "rgba(139,61,255,0.14)" : "#1d1d20", color: "#fff", textAlign: "left", cursor: "pointer",
+                    }}
+                  >
+                    <span style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                      <span style={{ width: "20px", height: "20px", borderRadius: "50%", border: selected ? "6px solid #8b3dff" : "2px solid #77777f", boxSizing: "border-box" }} />
+                      <span style={{ fontSize: "15px", fontWeight: 600 }}>{variation.name}</span>
+                    </span>
+                    <span style={{ fontSize: "15px", fontWeight: 700, whiteSpace: "nowrap" }}>
+                      ₹{Number(variation.price || 0).toFixed(2)}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "16px", marginTop: "22px", paddingTop: "18px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+              <div>
+                <span style={{ display: "block", fontSize: "12px", color: "#8d8d97", marginBottom: "4px" }}>Selected</span>
+                <strong style={{ fontSize: "17px", color: "#fff" }}>{variationModalSelection?.name || "Choose an option"}</strong>
+              </div>
+              <button type="button" className="add-button" onClick={confirmVariationAdd} disabled={cartUpdating || !variationModalSelection} style={{ minWidth: "145px", justifyContent: "center" }}>
+                <Plus size={17} />
+                Add to Cart
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 

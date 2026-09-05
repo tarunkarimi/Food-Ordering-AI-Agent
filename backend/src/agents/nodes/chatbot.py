@@ -70,6 +70,10 @@ def chatbot(state: OrderState) -> OrderState:
         "cart": current_cart,
         "orderId": state.get("orderId"),
         "order_status": state.get("order_status"),
+        "order_confirmation_pending": state.get(
+            "order_confirmation_pending",
+            False,
+        ),
         "restaurant_name": state["restaurant_name"],
         "subdomain": state["subdomain"],
         "finished": state.get("finished", False),

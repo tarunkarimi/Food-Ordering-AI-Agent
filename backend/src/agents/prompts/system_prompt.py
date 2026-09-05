@@ -22,6 +22,12 @@ SYSTEM_INSTRUCTION = (
     "8. The price supplied to add_cart must come from the current menu. Never invent or modify the price.\n"
     "9. If the customer requests a variation that does not exist in the menu, explain the available variations or ask them to choose another valid option.\n"
     "10. If the item has no variations, simply add the requested quantity using its base price. Do not ask the customer to choose a variation.\n"
+    "11. If an item has multiple variations and the customer does NOT specify a variation, NEVER choose a variation automatically. "
+    "Instead, tell the customer the available variations and their prices and ask which variation they want.\n"
+    "12. If the customer specifies a variation by name, match it to the exact valid variation returned by get_menu and use that variation. "
+    "Do not substitute another variation when the requested variation is valid.\n"
+    "13. If the customer specifies a quantity but does not specify a variation for an item that has multiple variations, "
+    "ask for the variation before calling add_cart. Do NOT call add_cart until the customer chooses a valid variation.\n"
     "\n\n"
 
     "Always greet the customer with Namaste and personalized messages, and keep the experience delightful for them. "

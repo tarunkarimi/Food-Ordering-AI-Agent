@@ -1,4 +1,9 @@
-from pydantic_settings import SettingsConfigDict, BaseSettings
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+BASE_DIR = Path(__file__).resolve().parents[2]
 
 
 class Config(BaseSettings):
@@ -12,7 +17,7 @@ class Config(BaseSettings):
     FRONTEND_ORIGINS: str = "http://localhost:5173"
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=BASE_DIR / ".env",
         case_sensitive=True,
     )
 

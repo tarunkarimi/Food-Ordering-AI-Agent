@@ -1,8 +1,16 @@
 from unittest.mock import Mock, patch
 
 import requests
+from langchain_core.messages import HumanMessage
 
 from tests.test_cart_tools import make_cart, make_state, run_tool
+
+
+def confirmed_state():
+    state = make_state(make_cart())
+    state["order_confirmation_pending"] = True
+    state["messages"] = [HumanMessage(content="yes")]
+    return state
 
 
 def place(state):
@@ -26,10 +34,12 @@ def response(status_code=201, payload=None):
 
 
 def test_empty_cart_cannot_place_order():
-    state = make_state(make_cart())
+    state = confirmed_state()
     state["cart"].items = []
+
     with patch("src.agents.tools.cart.requests.post") as post:
         result = place(state)
+
     post.assert_not_called()
     assert result["cart"].items == []
     assert result["orderId"] is None
@@ -37,48 +47,82 @@ def test_empty_cart_cannot_place_order():
 
 
 def test_successful_order_placement_clears_cart_and_sets_completion():
-    state = make_state(make_cart())
-    with patch("src.agents.tools.cart.requests.post", return_value=response()) as post:
+    state = confirmed_state()
+
+    with patch(
+        "src.agents.tools.cart.requests.post",
+        return_value=response(),
+    ) as post:
         result = place(state)
+
     post.assert_called_once()
     assert result["cart"].items == []
     assert result["orderId"] == "ORD-123"
     assert result["order_status"] == "confirmed"
     assert result["finished"] is True
+    assert result["order_confirmation_pending"] is False
 
 
 def test_backend_errors_preserve_order_state():
     for status_code in (400, 500):
-        state = make_state(make_cart())
-        with patch("src.agents.tools.cart.requests.post", return_value=response(status_code)):
+        state = confirmed_state()
+
+        with patch(
+            "src.agents.tools.cart.requests.post",
+            return_value=response(status_code),
+        ):
             result = place(state)
+
         assert len(result["cart"].items) == 1
         assert result["orderId"] is None
         assert result["finished"] is False
+        assert result["order_confirmation_pending"] is True
 
 
 def test_connection_failure_preserves_order_state():
-    state = make_state(make_cart())
-    with patch("src.agents.tools.cart.requests.post", side_effect=requests.ConnectionError):
+    state = confirmed_state()
+
+    with patch(
+        "src.agents.tools.cart.requests.post",
+        side_effect=requests.ConnectionError,
+    ):
         result = place(state)
+
     assert len(result["cart"].items) == 1
     assert result["orderId"] is None
     assert result["finished"] is False
+    assert result["order_confirmation_pending"] is True
 
 
 def test_timeout_preserves_order_state():
-    state = make_state(make_cart())
-    with patch("src.agents.tools.cart.requests.post", side_effect=requests.Timeout):
+    state = confirmed_state()
+
+    with patch(
+        "src.agents.tools.cart.requests.post",
+        side_effect=requests.Timeout,
+    ):
         result = place(state)
+
     assert len(result["cart"].items) == 1
     assert result["orderId"] is None
     assert result["finished"] is False
+    assert result["order_confirmation_pending"] is True
 
 
 def test_missing_order_id_preserves_order_state():
-    state = make_state(make_cart())
-    with patch("src.agents.tools.cart.requests.post", return_value=response(payload={"subtotal": 440.0})):
+    state = confirmed_state()
+
+    with patch(
+        "src.agents.tools.cart.requests.post",
+        return_value=response(
+            payload={
+                "subtotal": 440.0,
+            }
+        ),
+    ):
         result = place(state)
+
     assert len(result["cart"].items) == 1
     assert result["orderId"] is None
     assert result["finished"] is False
+    assert result["order_confirmation_pending"] is True

@@ -29,3 +29,11 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Secrets / credentials
+secrets.json
+credentials.json
+*.pem
+*.key
+*.p12
+*.pfx

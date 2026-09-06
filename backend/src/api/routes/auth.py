@@ -17,13 +17,12 @@ from sqlalchemy.orm import Session
 from src.db.database import get_db
 from src.db.models import User, UserVerificationCode
 from src.security.otp import generate_otp, hash_otp, verify_otp
-from src.security.passwords import hash_password
+from src.security.passwords import hash_password, verify_password
 
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
 
 OTP_EXPIRY_MINUTES = 10
 MAX_OTP_ATTEMPTS = 5
@@ -75,20 +74,55 @@ class SignupRequest(BaseModel):
     @model_validator(mode="after")
     def validate_identity(self) -> "SignupRequest":
         if self.email is None and not self.phone:
-            raise ValueError(
-                "Either email or phone is required."
-            )
+            raise ValueError("Either email or phone is required.")
 
         if self.email is not None and self.phone:
-            raise ValueError(
-                "Provide either email or phone, not both."
-            )
+            raise ValueError("Provide either email or phone, not both.")
 
         return self
 
 
 class SignupResponse(BaseModel):
     """Signup response."""
+
+    id: int
+    email: EmailStr | None
+    phone: str | None
+    email_verified: bool
+    phone_verified: bool
+    is_active: bool
+
+
+class LoginRequest(BaseModel):
+    """Password login request."""
+
+    email: EmailStr | None = None
+
+    phone: str | None = Field(
+        default=None,
+        min_length=7,
+        max_length=32,
+    )
+
+    password: str = Field(
+        ...,
+        min_length=1,
+        max_length=128,
+    )
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> "LoginRequest":
+        if self.email is None and not self.phone:
+            raise ValueError("Either email or phone is required.")
+
+        if self.email is not None and self.phone:
+            raise ValueError("Provide either email or phone, not both.")
+
+        return self
+
+
+class LoginResponse(BaseModel):
+    """Password login response."""
 
     id: int
     email: EmailStr | None
@@ -228,6 +262,93 @@ def signup(
 
 
 @router.post(
+    "/login",
+    response_model=LoginResponse,
+)
+def login(
+    request: LoginRequest,
+    db: Session = Depends(get_db),
+) -> LoginResponse:
+    """Authenticate a user with email or phone and password."""
+
+    email = (
+        normalize_email(str(request.email))
+        if request.email
+        else None
+    )
+
+    phone = None
+
+    if request.phone:
+        try:
+            phone = normalize_phone(request.phone)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+
+    if email is not None:
+        user = db.scalar(
+            select(User).where(User.email == email)
+        )
+        identity_verified = (
+            user is not None and user.email_verified
+        )
+    else:
+        user = db.scalar(
+            select(User).where(User.phone == phone)
+        )
+        identity_verified = (
+            user is not None and user.phone_verified
+        )
+
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials.",
+        )
+
+    if not verify_password(
+        request.password,
+        user.password_hash,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials.",
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account is inactive.",
+        )
+
+    if not identity_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Account identity is not verified. "
+                "Please verify your email or phone number first."
+            ),
+        )
+
+    logger.info(
+        "Successful password login for user_id=%s",
+        user.id,
+    )
+
+    return LoginResponse(
+        id=user.id,
+        email=user.email,
+        phone=user.phone,
+        email_verified=user.email_verified,
+        phone_verified=user.phone_verified,
+        is_active=user.is_active,
+    )
+
+
+@router.post(
     "/verification/request",
     response_model=VerificationResponse,
     status_code=status.HTTP_202_ACCEPTED,
@@ -299,8 +420,9 @@ def request_verification_code(
         channel=request.channel,
         purpose=request.purpose,
         code_hash=hash_otp(otp),
-        expires_at=now
-        + timedelta(minutes=OTP_EXPIRY_MINUTES),
+        expires_at=now + timedelta(
+            minutes=OTP_EXPIRY_MINUTES
+        ),
         attempts=0,
     )
 

@@ -4,6 +4,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from src.api.routes.auth import router as auth_router
 from src.api.routes.chats import router as chat_router
 from src.configs.config import config
 
@@ -40,7 +41,6 @@ frontend_origins = [
     if origin.strip()
 ]
 
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=frontend_origins,
@@ -53,6 +53,12 @@ app.add_middleware(
 # ------------------------------------------------------------------
 # Routes
 # ------------------------------------------------------------------
+
+app.include_router(
+    auth_router,
+    prefix="/api/auth",
+    tags=["authentication"],
+)
 
 app.include_router(
     chat_router,

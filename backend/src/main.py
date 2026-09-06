@@ -5,13 +5,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.routes.auth import router as auth_router
+from src.api.routes.cart import router as cart_router
 from src.api.routes.chats import router as chat_router
 from src.configs.config import config
 
-
-# ------------------------------------------------------------------
-# Logging
-# ------------------------------------------------------------------
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,19 +18,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ------------------------------------------------------------------
-# Application
-# ------------------------------------------------------------------
-
 app = FastAPI(
     title="Food Ordering AI Agent",
     version="1.0.0",
 )
 
-
-# ------------------------------------------------------------------
-# CORS
-# ------------------------------------------------------------------
 
 frontend_origins = [
     origin.strip()
@@ -50,14 +39,16 @@ app.add_middleware(
 )
 
 
-# ------------------------------------------------------------------
-# Routes
-# ------------------------------------------------------------------
-
 app.include_router(
     auth_router,
     prefix="/api/auth",
     tags=["authentication"],
+)
+
+app.include_router(
+    cart_router,
+    prefix="/api/cart",
+    tags=["cart"],
 )
 
 app.include_router(
@@ -66,10 +57,6 @@ app.include_router(
     tags=["workflows"],
 )
 
-
-# ------------------------------------------------------------------
-# Health / Root
-# ------------------------------------------------------------------
 
 @app.get("/")
 def read_root():
@@ -86,10 +73,6 @@ def health_check():
         "service": "ai-backend",
     }
 
-
-# ------------------------------------------------------------------
-# Local development entry point
-# ------------------------------------------------------------------
 
 def main():
     logger.info("Starting AI backend on port %s", config.PORT)

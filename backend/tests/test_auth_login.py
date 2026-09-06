@@ -8,7 +8,6 @@ from sqlalchemy import select
 from src.db.database import SessionLocal
 from src.db.models import User
 from src.main import app
-from src.security.passwords import hash_password
 
 
 client = TestClient(app)
@@ -55,12 +54,15 @@ def test_login_with_verified_email_and_password_succeeds() -> None:
 
     data = response.json()
 
-    assert data["id"] == user_id
-    assert data["email"] == email
-    assert data["phone"] is None
-    assert data["email_verified"] is True
-    assert data["phone_verified"] is False
-    assert data["is_active"] is True
+    assert data["access_token"]
+    assert data["token_type"] == "bearer"
+
+    assert data["user"]["id"] == user_id
+    assert data["user"]["email"] == email
+    assert data["user"]["phone"] is None
+    assert data["user"]["email_verified"] is True
+    assert data["user"]["phone_verified"] is False
+    assert data["user"]["is_active"] is True
 
 
 def test_login_with_verified_phone_and_password_succeeds() -> None:
@@ -98,12 +100,15 @@ def test_login_with_verified_phone_and_password_succeeds() -> None:
 
     data = response.json()
 
-    assert data["id"] == user_id
-    assert data["email"] is None
-    assert data["phone"] == phone
-    assert data["phone_verified"] is True
-    assert data["email_verified"] is False
-    assert data["is_active"] is True
+    assert data["access_token"]
+    assert data["token_type"] == "bearer"
+
+    assert data["user"]["id"] == user_id
+    assert data["user"]["email"] is None
+    assert data["user"]["phone"] == phone
+    assert data["user"]["phone_verified"] is True
+    assert data["user"]["email_verified"] is False
+    assert data["user"]["is_active"] is True
 
 
 def test_login_normalizes_email_case() -> None:
@@ -136,7 +141,7 @@ def test_login_normalizes_email_case() -> None:
     )
 
     assert response.status_code == 200
-    assert response.json()["id"] == user_id
+    assert response.json()["user"]["id"] == user_id
 
 
 def test_login_rejects_wrong_password() -> None:
@@ -360,3 +365,6 @@ def test_login_does_not_return_password_or_hash() -> None:
 
     assert "password" not in data
     assert "password_hash" not in data
+
+    assert "password" not in data["user"]
+    assert "password_hash" not in data["user"]

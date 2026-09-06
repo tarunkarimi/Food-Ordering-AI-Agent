@@ -18,6 +18,10 @@ from src.db.database import get_db
 from src.db.models import User, UserVerificationCode
 from src.security.otp import generate_otp, hash_otp, verify_otp
 from src.security.passwords import hash_password, verify_password
+from src.security.jwt import create_access_token
+from src.api.dependencies import get_current_session, get_current_user
+from src.services.sessions import create_user_session, revoke_session
+from src.services.verification import deliver_verification_code
 
 
 logger = logging.getLogger(__name__)
@@ -121,8 +125,8 @@ class LoginRequest(BaseModel):
         return self
 
 
-class LoginResponse(BaseModel):
-    """Password login response."""
+class AuthUserResponse(BaseModel):
+    """Authenticated user information."""
 
     id: int
     email: EmailStr | None
@@ -130,6 +134,22 @@ class LoginResponse(BaseModel):
     email_verified: bool
     phone_verified: bool
     is_active: bool
+
+
+class LoginResponse(BaseModel):
+    """Password login response."""
+
+    access_token: str
+    token_type: str
+    user: AuthUserResponse
+
+
+class VerifyLoginOTPResponse(BaseModel):
+    """Successful OTP login response."""
+
+    access_token: str
+    token_type: str
+    user: AuthUserResponse
 
 
 class LoginOTPRequest(BaseModel):
@@ -187,18 +207,6 @@ class VerifyLoginOTPRequest(BaseModel):
             raise ValueError("Provide either email or phone, not both.")
 
         return self
-
-
-class VerifyLoginOTPResponse(BaseModel):
-    """Successful login OTP response."""
-
-    id: int
-    email: EmailStr | None
-    phone: str | None
-    email_verified: bool
-    phone_verified: bool
-    is_active: bool
-
 
 class VerificationRequest(BaseModel):
     """Request to generate a signup verification code."""
@@ -314,8 +322,31 @@ def signup(
     db.commit()
     db.refresh(user)
 
+    verification_channel = "email" if user.email is not None else "phone"
+    verification_destination = user.email or user.phone
+    verification_now = datetime.now(timezone.utc)
+    verification_otp = generate_otp()
+
+    verification_code = UserVerificationCode(
+        user_id=user.id,
+        channel=verification_channel,
+        purpose="signup",
+        code_hash=hash_otp(verification_otp),
+        expires_at=verification_now + timedelta(minutes=OTP_EXPIRY_MINUTES),
+        attempts=0,
+    )
+
+    db.add(verification_code)
+    db.commit()
+
+    deliver_verification_code(
+        channel=verification_channel,
+        destination=verification_destination,
+        code=verification_otp,
+    )
+
     logger.info(
-        "Created user account with id=%s",
+        "Created user account with id=%s and signup verification code",
         user.id,
     )
 
@@ -406,13 +437,19 @@ def login(
         user.id,
     )
 
+    access_token = create_user_session(db, user.id)
+
     return LoginResponse(
+        access_token=access_token,
+        token_type="bearer",
+        user=AuthUserResponse(
         id=user.id,
         email=user.email,
         phone=user.phone,
         email_verified=user.email_verified,
         phone_verified=user.phone_verified,
         is_active=user.is_active,
+        ),
     )
 
 
@@ -650,13 +687,19 @@ def verify_login_otp(
         user.id,
     )
 
+    access_token = create_user_session(db, user.id)
+
     return VerifyLoginOTPResponse(
+        access_token=access_token,
+        token_type="bearer",
+        user=AuthUserResponse(
         id=user.id,
         email=user.email,
         phone=user.phone,
         email_verified=user.email_verified,
         phone_verified=user.phone_verified,
         is_active=user.is_active,
+        ),
     )
 
 
@@ -849,3 +892,31 @@ def verify_verification_code(
         message="Verification successful.",
         verified=True,
     )
+
+@router.get(
+    "/me",
+    response_model=AuthUserResponse,
+)
+def get_authenticated_user(
+    user: User = Depends(get_current_user),
+) -> AuthUserResponse:
+    """Return the currently authenticated user."""
+    return AuthUserResponse(
+        id=user.id,
+        email=user.email,
+        phone=user.phone,
+        email_verified=user.email_verified,
+        phone_verified=user.phone_verified,
+        is_active=user.is_active,
+    )
+
+@router.post("/logout")
+def logout(
+    authenticated_session=Depends(get_current_session),
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    """Revoke the current persistent authentication session."""
+
+    revoke_session(db, authenticated_session.session)
+
+    return {"message": "Logged out successfully."}

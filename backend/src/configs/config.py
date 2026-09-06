@@ -12,6 +12,10 @@ class Config(BaseSettings):
     GOOGLE_API_KEY: str
     DATABASE_URL: str
 
+    # Authentication.
+    JWT_SECRET_KEY: str
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+
     # Comma-separated frontend origins.
     # Example:
     # http://localhost:5173,https://your-production-domain.com

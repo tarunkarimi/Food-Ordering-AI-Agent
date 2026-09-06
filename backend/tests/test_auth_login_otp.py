@@ -39,9 +39,7 @@ def _verify_phone_user(user_id: int) -> None:
         db.commit()
 
 
-def test_request_login_otp_for_verified_email(
-    monkeypatch,
-) -> None:
+def test_request_login_otp_for_verified_email(monkeypatch) -> None:
     email = _unique_email()
 
     signup = client.post(
@@ -79,9 +77,7 @@ def test_request_login_otp_for_verified_email(
                 UserVerificationCode.purpose == "login",
                 UserVerificationCode.verified_at.is_(None),
             )
-            .order_by(
-                UserVerificationCode.id.desc()
-            )
+            .order_by(UserVerificationCode.id.desc())
         )
 
         assert code is not None
@@ -89,9 +85,7 @@ def test_request_login_otp_for_verified_email(
         assert code.attempts == 0
 
 
-def test_request_login_otp_for_verified_phone(
-    monkeypatch,
-) -> None:
+def test_request_login_otp_for_verified_phone(monkeypatch) -> None:
     phone = _unique_phone()
 
     signup = client.post(
@@ -129,18 +123,15 @@ def test_request_login_otp_for_verified_phone(
                 UserVerificationCode.purpose == "login",
                 UserVerificationCode.verified_at.is_(None),
             )
-            .order_by(
-                UserVerificationCode.id.desc()
-            )
+            .order_by(UserVerificationCode.id.desc())
         )
 
         assert code is not None
         assert code.code_hash != "654321"
+        assert code.attempts == 0
 
 
-def test_verify_email_login_otp_succeeds(
-    monkeypatch,
-) -> None:
+def test_verify_email_login_otp_succeeds(monkeypatch) -> None:
     email = _unique_email()
 
     signup = client.post(
@@ -181,16 +172,18 @@ def test_verify_email_login_otp_succeeds(
 
     data = response.json()
 
-    assert data["id"] == user_id
-    assert data["email"] == email
-    assert data["phone"] is None
-    assert data["email_verified"] is True
-    assert data["is_active"] is True
+    assert data["access_token"]
+    assert data["token_type"] == "bearer"
+
+    assert data["user"]["id"] == user_id
+    assert data["user"]["email"] == email
+    assert data["user"]["phone"] is None
+    assert data["user"]["email_verified"] is True
+    assert data["user"]["phone_verified"] is False
+    assert data["user"]["is_active"] is True
 
 
-def test_verify_phone_login_otp_succeeds(
-    monkeypatch,
-) -> None:
+def test_verify_phone_login_otp_succeeds(monkeypatch) -> None:
     phone = _unique_phone()
 
     signup = client.post(
@@ -231,16 +224,18 @@ def test_verify_phone_login_otp_succeeds(
 
     data = response.json()
 
-    assert data["id"] == user_id
-    assert data["email"] is None
-    assert data["phone"] == phone
-    assert data["phone_verified"] is True
-    assert data["is_active"] is True
+    assert data["access_token"]
+    assert data["token_type"] == "bearer"
+
+    assert data["user"]["id"] == user_id
+    assert data["user"]["email"] is None
+    assert data["user"]["phone"] == phone
+    assert data["user"]["phone_verified"] is True
+    assert data["user"]["email_verified"] is False
+    assert data["user"]["is_active"] is True
 
 
-def test_wrong_login_otp_increments_attempts(
-    monkeypatch,
-) -> None:
+def test_wrong_login_otp_increments_attempts(monkeypatch) -> None:
     email = _unique_email()
 
     signup = client.post(
@@ -286,18 +281,14 @@ def test_wrong_login_otp_increments_attempts(
                 UserVerificationCode.channel == "email",
                 UserVerificationCode.purpose == "login",
             )
-            .order_by(
-                UserVerificationCode.id.desc()
-            )
+            .order_by(UserVerificationCode.id.desc())
         )
 
         assert code is not None
         assert code.attempts == 1
 
 
-def test_login_otp_blocks_after_max_attempts(
-    monkeypatch,
-) -> None:
+def test_login_otp_blocks_after_max_attempts(monkeypatch) -> None:
     email = _unique_email()
 
     signup = client.post(
@@ -343,11 +334,12 @@ def test_login_otp_blocks_after_max_attempts(
     )
 
     assert response.status_code == 429
+    assert response.json()["detail"] == (
+        "Maximum verification attempts exceeded."
+    )
 
 
-def test_login_otp_expiry_is_enforced(
-    monkeypatch,
-) -> None:
+def test_login_otp_expiry_is_enforced(monkeypatch) -> None:
     email = _unique_email()
 
     signup = client.post(
@@ -382,16 +374,16 @@ def test_login_otp_expiry_is_enforced(
                 UserVerificationCode.channel == "email",
                 UserVerificationCode.purpose == "login",
             )
-            .order_by(
-                UserVerificationCode.id.desc()
-            )
+            .order_by(UserVerificationCode.id.desc())
         )
 
         assert code is not None
+
         code.expires_at = (
             datetime.now(timezone.utc)
             - timedelta(minutes=1)
         )
+
         db.commit()
 
     response = client.post(
@@ -456,8 +448,7 @@ def test_new_login_otp_invalidates_previous_code(
 
     assert old_code_response.status_code == 400
     assert old_code_response.json()["detail"] == (
-        "Invalid verification code. "
-        "4 attempt(s) remaining."
+        "Invalid verification code. 4 attempt(s) remaining."
     )
 
     new_code_response = client.post(
@@ -469,6 +460,12 @@ def test_new_login_otp_invalidates_previous_code(
     )
 
     assert new_code_response.status_code == 200
+
+    data = new_code_response.json()
+
+    assert data["access_token"]
+    assert data["token_type"] == "bearer"
+    assert data["user"]["id"] == user_id
 
 
 def test_login_otp_rejects_unverified_email() -> None:
@@ -507,9 +504,7 @@ def test_login_otp_rejects_unknown_email() -> None:
     )
 
 
-def test_login_otp_rejects_inactive_user(
-    monkeypatch,
-) -> None:
+def test_login_otp_rejects_inactive_user() -> None:
     email = _unique_email()
 
     signup = client.post(
@@ -565,15 +560,15 @@ def test_login_otp_requires_identity() -> None:
 def test_verify_login_otp_requires_identity() -> None:
     response = client.post(
         "/api/auth/login/otp/verify",
-        json={"code": "123456"},
+        json={
+            "code": "123456",
+        },
     )
 
     assert response.status_code == 422
 
 
-def test_login_otp_normalizes_email_case(
-    monkeypatch,
-) -> None:
+def test_login_otp_normalizes_email_case(monkeypatch) -> None:
     email = _unique_email()
 
     signup = client.post(
@@ -613,12 +608,15 @@ def test_login_otp_normalizes_email_case(
     )
 
     assert response.status_code == 200
-    assert response.json()["id"] == user_id
+
+    data = response.json()
+
+    assert data["access_token"]
+    assert data["token_type"] == "bearer"
+    assert data["user"]["id"] == user_id
 
 
-def test_login_otp_rejects_reuse(
-    monkeypatch,
-) -> None:
+def test_login_otp_rejects_reuse(monkeypatch) -> None:
     email = _unique_email()
 
     signup = client.post(
@@ -645,7 +643,7 @@ def test_login_otp_rejects_reuse(
         json={"email": email},
     ).status_code == 202
 
-    first = client.post(
+    first_response = client.post(
         "/api/auth/login/otp/verify",
         json={
             "email": email,
@@ -653,9 +651,14 @@ def test_login_otp_rejects_reuse(
         },
     )
 
-    assert first.status_code == 200
+    assert first_response.status_code == 200
 
-    second = client.post(
+    data = first_response.json()
+
+    assert data["access_token"]
+    assert data["token_type"] == "bearer"
+
+    second_response = client.post(
         "/api/auth/login/otp/verify",
         json={
             "email": email,
@@ -663,7 +666,7 @@ def test_login_otp_rejects_reuse(
         },
     )
 
-    assert second.status_code == 400
-    assert second.json()["detail"] == (
+    assert second_response.status_code == 400
+    assert second_response.json()["detail"] == (
         "No active login verification code found."
     )

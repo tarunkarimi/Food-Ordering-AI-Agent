@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from src.agents.tools.cart import _fetch_menu_items, _valid_price, _valid_quantity
 from src.api.dependencies import AuthenticatedSession, get_current_session
+from src.configs.config import config
 from src.db.database import get_db
 from src.services.cart import (
     add_item,
@@ -14,6 +15,9 @@ from src.services.cart import (
     remove_item,
     update_item,
 )
+
+import requests
+
 
 router = APIRouter()
 
@@ -34,6 +38,13 @@ class CartItemUpdateRequest(BaseModel):
     title: str = Field(min_length=1, max_length=500)
     quantity: int = Field(gt=0)
     variation_id: str | None = Field(default=None, max_length=255)
+
+
+class CartCheckoutRequest(BaseModel):
+    confirm: bool = Field(
+        ...,
+        description="Explicit customer confirmation to place the order.",
+    )
 
 
 def _find_menu_item(items, *, item_id: str, title: str):
@@ -68,7 +79,10 @@ def _authoritative_item(
             detail="Quantity must be greater than zero.",
         )
 
-    raw_price = menu_item.get("base_price", menu_item.get("price"))
+    raw_price = menu_item.get(
+        "base_price",
+        menu_item.get("price"),
+    )
 
     if not _valid_price(raw_price):
         raise HTTPException(
@@ -87,7 +101,9 @@ def _authoritative_item(
         )
 
     normalized_variation_id = (
-        variation_id.strip() if variation_id is not None else None
+        variation_id.strip()
+        if variation_id is not None
+        else None
     )
 
     variation_name = None
@@ -98,8 +114,11 @@ def _authoritative_item(
             (
                 variation
                 for variation in variations
-                if isinstance(variation, dict)
-                and str(variation.get("id", "")) == normalized_variation_id
+                if (
+                    isinstance(variation, dict)
+                    and str(variation.get("id", ""))
+                    == normalized_variation_id
+                )
             ),
             None,
         )
@@ -118,7 +137,10 @@ def _authoritative_item(
                 detail="That menu variation has invalid pricing.",
             )
 
-        variation_name = str(selected_variation.get("name", "")).strip()
+        variation_name = str(
+            selected_variation.get("name", "")
+        ).strip()
+
         variation_price = float(raw_variation_price)
         authoritative_price = variation_price
 
@@ -212,7 +234,10 @@ def _serialize_cart(cart):
                 "price": float(item.variation_price),
             }
 
-        line_total = float(item.unit_price) * item.quantity
+        line_total = (
+            float(item.unit_price)
+            * item.quantity
+        )
 
         items.append(
             {
@@ -227,7 +252,10 @@ def _serialize_cart(cart):
             }
         )
 
-    total = sum(item["line_total"] for item in items)
+    total = sum(
+        item["line_total"]
+        for item in items
+    )
 
     return {
         "id": cart.id,
@@ -238,9 +266,75 @@ def _serialize_cart(cart):
     }
 
 
+def _build_checkout_items(cart, menu_items):
+    """Revalidate persistent cart items and build the order payload."""
+    order_items = []
+
+    for cart_item in cart.items:
+        menu_item = _find_menu_item(
+            menu_items,
+            item_id=cart_item.item_id,
+            title=cart_item.title,
+        )
+
+        if menu_item is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"'{cart_item.title}' is no longer "
+                    "available on the current menu."
+                ),
+            )
+
+        authoritative = _authoritative_item(
+            menu_item,
+            item_id=cart_item.item_id,
+            title=cart_item.title,
+            quantity=cart_item.quantity,
+            variation_id=cart_item.variation_id,
+        )
+
+        if authoritative["item_key"] != cart_item.item_key:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"The variation for '{cart_item.title}' "
+                    "is no longer available."
+                ),
+            )
+
+        order_items.append(
+            {
+                "item_id": authoritative["item_id"],
+                "title": authoritative["title"],
+                "quantity": authoritative["quantity"],
+                "base_price": authoritative["unit_price"],
+                "variation": (
+                    {
+                        "id": authoritative["variation_id"],
+                        "name": authoritative["variation_name"],
+                        "price": authoritative["variation_price"],
+                    }
+                    if authoritative["variation_id"] is not None
+                    else None
+                ),
+            }
+        )
+
+    if not order_items:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot place an empty cart.",
+        )
+
+    return order_items
+
+
 @router.get("")
 def get_authenticated_cart(
-    auth: AuthenticatedSession = Depends(get_current_session),
+    auth: AuthenticatedSession = Depends(
+        get_current_session
+    ),
     db: Session = Depends(get_db),
 ):
     return _serialize_cart(
@@ -254,7 +348,9 @@ def get_authenticated_cart(
 @router.post("/items")
 def add_authenticated_cart_item(
     request: CartItemRequest,
-    auth: AuthenticatedSession = Depends(get_current_session),
+    auth: AuthenticatedSession = Depends(
+        get_current_session
+    ),
     db: Session = Depends(get_db),
 ):
     authoritative = _fetch_authoritative(
@@ -287,7 +383,9 @@ def add_authenticated_cart_item(
 def update_authenticated_cart_item(
     item_key: str,
     request: CartItemUpdateRequest,
-    auth: AuthenticatedSession = Depends(get_current_session),
+    auth: AuthenticatedSession = Depends(
+        get_current_session
+    ),
     db: Session = Depends(get_db),
 ):
     authoritative = _fetch_authoritative(
@@ -302,7 +400,10 @@ def update_authenticated_cart_item(
     if authoritative["item_key"] != item_key:
         raise HTTPException(
             status_code=400,
-            detail="Cart item key does not match the requested item.",
+            detail=(
+                "Cart item key does not match "
+                "the requested item."
+            ),
         )
 
     try:
@@ -328,7 +429,9 @@ def update_authenticated_cart_item(
 @router.delete("/items/{item_key:path}")
 def delete_authenticated_cart_item(
     item_key: str,
-    auth: AuthenticatedSession = Depends(get_current_session),
+    auth: AuthenticatedSession = Depends(
+        get_current_session
+    ),
     db: Session = Depends(get_db),
 ):
     try:
@@ -348,7 +451,9 @@ def delete_authenticated_cart_item(
 
 @router.delete("")
 def clear_authenticated_cart(
-    auth: AuthenticatedSession = Depends(get_current_session),
+    auth: AuthenticatedSession = Depends(
+        get_current_session
+    ),
     db: Session = Depends(get_db),
 ):
     return _serialize_cart(
@@ -357,3 +462,160 @@ def clear_authenticated_cart(
             user_id=auth.user.id,
         )
     )
+
+
+@router.post("/checkout")
+def checkout_authenticated_cart(
+    request: CartCheckoutRequest,
+    auth: AuthenticatedSession = Depends(
+        get_current_session
+    ),
+    db: Session = Depends(get_db),
+):
+    if not request.confirm:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Explicit confirmation is required "
+                "before placing the order."
+            ),
+        )
+
+    cart = get_cart(
+        db,
+        user_id=auth.user.id,
+    )
+
+    if cart is None or not cart.items:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot place an empty cart.",
+        )
+
+    menu_items, menu_error = _fetch_menu_items(
+        {
+            "subdomain": cart.subdomain,
+        }
+    )
+
+    if menu_error:
+        raise HTTPException(
+            status_code=503,
+            detail=menu_error,
+        )
+
+    order_items = _build_checkout_items(
+        cart,
+        menu_items,
+    )
+
+    order_url = (
+        f"{config.MENU_BACKEND_URL.rstrip('/')}"
+        "/orders"
+    )
+
+    payload = {
+        "restaurant_name": cart.restaurant_name,
+        "subdomain": cart.subdomain,
+        "items": order_items,
+    }
+
+    try:
+        response = requests.post(
+            order_url,
+            json=payload,
+            timeout=10,
+        )
+
+        response.raise_for_status()
+        result = response.json()
+
+        if not isinstance(result, dict):
+            raise ValueError(
+                "Order API response is malformed."
+            )
+
+        order_id = result.get("order_id")
+        status = result.get("status")
+        subtotal = result.get("subtotal")
+
+        if (
+            not isinstance(order_id, str)
+            or not order_id
+            or status != "confirmed"
+            or not _valid_price(subtotal)
+        ):
+            raise ValueError(
+                "Order API response is invalid."
+            )
+
+    except requests.Timeout as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Unable to place order: the ordering "
+                "service timed out. Your cart was preserved."
+            ),
+        ) from exc
+
+    except requests.ConnectionError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Unable to place order: the ordering "
+                "service is unavailable. Your cart was preserved."
+            ),
+        ) from exc
+
+    except requests.RequestException as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Unable to place order: the ordering "
+                "service returned an error. Your cart was preserved."
+            ),
+        ) from exc
+
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Unable to place order: the ordering "
+                "service returned an invalid response. "
+                "Your cart was preserved."
+            ),
+        ) from exc
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Unable to place order: the ordering "
+                "service failed unexpectedly. "
+                "Your cart was preserved."
+            ),
+        ) from exc
+
+    total_items = sum(
+        item["quantity"]
+        for item in order_items
+    )
+
+    clear_cart(
+        db,
+        user_id=auth.user.id,
+    )
+
+    return {
+        "success": True,
+        "order_id": order_id,
+        "status": status,
+        "subtotal": float(subtotal),
+        "total_items": total_items,
+        "cart": _serialize_cart(
+            get_cart(
+                db,
+                user_id=auth.user.id,
+            )
+        ),
+    }

@@ -132,8 +132,76 @@ class LoginResponse(BaseModel):
     is_active: bool
 
 
+class LoginOTPRequest(BaseModel):
+    """Request to generate a login OTP."""
+
+    email: EmailStr | None = None
+
+    phone: str | None = Field(
+        default=None,
+        min_length=7,
+        max_length=32,
+    )
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> "LoginOTPRequest":
+        if self.email is None and not self.phone:
+            raise ValueError("Either email or phone is required.")
+
+        if self.email is not None and self.phone:
+            raise ValueError("Provide either email or phone, not both.")
+
+        return self
+
+
+class LoginOTPResponse(BaseModel):
+    """Login OTP request response."""
+
+    message: str
+
+
+class VerifyLoginOTPRequest(BaseModel):
+    """Verify a login OTP."""
+
+    email: EmailStr | None = None
+
+    phone: str | None = Field(
+        default=None,
+        min_length=7,
+        max_length=32,
+    )
+
+    code: str = Field(
+        ...,
+        min_length=6,
+        max_length=6,
+        pattern=r"^\d{6}$",
+    )
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> "VerifyLoginOTPRequest":
+        if self.email is None and not self.phone:
+            raise ValueError("Either email or phone is required.")
+
+        if self.email is not None and self.phone:
+            raise ValueError("Provide either email or phone, not both.")
+
+        return self
+
+
+class VerifyLoginOTPResponse(BaseModel):
+    """Successful login OTP response."""
+
+    id: int
+    email: EmailStr | None
+    phone: str | None
+    email_verified: bool
+    phone_verified: bool
+    is_active: bool
+
+
 class VerificationRequest(BaseModel):
-    """Request to generate a verification code."""
+    """Request to generate a signup verification code."""
 
     user_id: int = Field(gt=0)
 
@@ -155,7 +223,7 @@ class VerificationResponse(BaseModel):
 
 
 class VerifyOTPRequest(BaseModel):
-    """OTP verification request."""
+    """Signup OTP verification request."""
 
     user_id: int = Field(gt=0)
 
@@ -178,7 +246,7 @@ class VerifyOTPRequest(BaseModel):
 
 
 class VerifyOTPResponse(BaseModel):
-    """OTP verification response."""
+    """Signup OTP verification response."""
 
     message: str
     verified: bool
@@ -339,6 +407,250 @@ def login(
     )
 
     return LoginResponse(
+        id=user.id,
+        email=user.email,
+        phone=user.phone,
+        email_verified=user.email_verified,
+        phone_verified=user.phone_verified,
+        is_active=user.is_active,
+    )
+
+
+@router.post(
+    "/login/otp/request",
+    response_model=LoginOTPResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def request_login_otp(
+    request: LoginOTPRequest,
+    db: Session = Depends(get_db),
+) -> LoginOTPResponse:
+    """Generate a login OTP for a verified email or phone."""
+
+    email = (
+        normalize_email(str(request.email))
+        if request.email
+        else None
+    )
+
+    phone = None
+
+    if request.phone:
+        try:
+            phone = normalize_phone(request.phone)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+
+    if email is not None:
+        user = db.scalar(
+            select(User).where(User.email == email)
+        )
+        channel = "email"
+    else:
+        user = db.scalar(
+            select(User).where(User.phone == phone)
+        )
+        channel = "phone"
+
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unable to start OTP login.",
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account is inactive.",
+        )
+
+    if channel == "email" and not user.email_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email address is not verified.",
+        )
+
+    if channel == "phone" and not user.phone_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Phone number is not verified.",
+        )
+
+    now = datetime.now(timezone.utc)
+
+    previous_codes = db.scalars(
+        select(UserVerificationCode).where(
+            UserVerificationCode.user_id == user.id,
+            UserVerificationCode.channel == channel,
+            UserVerificationCode.purpose == "login",
+            UserVerificationCode.verified_at.is_(None),
+        )
+    ).all()
+
+    for previous_code in previous_codes:
+        previous_code.verified_at = now
+
+    otp = generate_otp()
+
+    verification_code = UserVerificationCode(
+        user_id=user.id,
+        channel=channel,
+        purpose="login",
+        code_hash=hash_otp(otp),
+        expires_at=now + timedelta(
+            minutes=OTP_EXPIRY_MINUTES
+        ),
+        attempts=0,
+    )
+
+    db.add(verification_code)
+    db.commit()
+
+    logger.info(
+        "Created login OTP for user_id=%s via %s",
+        user.id,
+        channel,
+    )
+
+    return LoginOTPResponse(
+        message=(
+            "Login verification code generated. "
+            "Delivery provider integration is pending."
+        ),
+    )
+
+
+@router.post(
+    "/login/otp/verify",
+    response_model=VerifyLoginOTPResponse,
+)
+def verify_login_otp(
+    request: VerifyLoginOTPRequest,
+    db: Session = Depends(get_db),
+) -> VerifyLoginOTPResponse:
+    """Verify a login OTP."""
+
+    email = (
+        normalize_email(str(request.email))
+        if request.email
+        else None
+    )
+
+    phone = None
+
+    if request.phone:
+        try:
+            phone = normalize_phone(request.phone)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+
+    if email is not None:
+        user = db.scalar(
+            select(User).where(User.email == email)
+        )
+        channel = "email"
+        identity_verified = (
+            user is not None and user.email_verified
+        )
+    else:
+        user = db.scalar(
+            select(User).where(User.phone == phone)
+        )
+        channel = "phone"
+        identity_verified = (
+            user is not None and user.phone_verified
+        )
+
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid OTP login request.",
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account is inactive.",
+        )
+
+    if not identity_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Account identity is not verified."
+            ),
+        )
+
+    verification_code = db.scalar(
+        select(UserVerificationCode)
+        .where(
+            UserVerificationCode.user_id == user.id,
+            UserVerificationCode.channel == channel,
+            UserVerificationCode.purpose == "login",
+            UserVerificationCode.verified_at.is_(None),
+        )
+        .order_by(
+            UserVerificationCode.created_at.desc(),
+            UserVerificationCode.id.desc(),
+        )
+    )
+
+    if verification_code is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No active login verification code found.",
+        )
+
+    now = datetime.now(timezone.utc)
+
+    if verification_code.expires_at <= now:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Verification code has expired.",
+        )
+
+    if verification_code.attempts >= MAX_OTP_ATTEMPTS:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Maximum verification attempts exceeded.",
+        )
+
+    verification_code.attempts += 1
+
+    if not verify_otp(
+        request.code,
+        verification_code.code_hash,
+    ):
+        db.commit()
+
+        remaining_attempts = (
+            MAX_OTP_ATTEMPTS
+            - verification_code.attempts
+        )
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Invalid verification code. "
+                f"{remaining_attempts} attempt(s) remaining."
+            ),
+        )
+
+    verification_code.verified_at = now
+    db.commit()
+
+    logger.info(
+        "Successful OTP login for user_id=%s",
+        user.id,
+    )
+
+    return VerifyLoginOTPResponse(
         id=user.id,
         email=user.email,
         phone=user.phone,

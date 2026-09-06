@@ -10,6 +10,7 @@ class Config(BaseSettings):
     MENU_BACKEND_URL: str
     PORT: int
     GOOGLE_API_KEY: str
+    DATABASE_URL: str
 
     # Comma-separated frontend origins.
     # Example:

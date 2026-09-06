@@ -15,7 +15,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from src.db.database import get_db
-from src.db.models import User, UserVerificationCode
+from src.db.models import User, UserSession, UserVerificationCode
 from src.security.otp import generate_otp, hash_otp, verify_otp
 from src.security.passwords import hash_password, verify_password
 from src.security.jwt import create_access_token
@@ -909,6 +909,61 @@ def get_authenticated_user(
         phone_verified=user.phone_verified,
         is_active=user.is_active,
     )
+
+@router.get("/sessions")
+def list_sessions(
+    authenticated_session=Depends(get_current_session),
+    db: Session = Depends(get_db),
+) -> list[dict[str, object]]:
+    """List persistent sessions belonging only to the current user."""
+
+    sessions = list(
+        db.scalars(
+            select(UserSession)
+            .where(UserSession.user_id == authenticated_session.user.id)
+            .order_by(UserSession.created_at.desc())
+        )
+    )
+
+    return [
+        {
+            "id": session.id,
+            "created_at": session.created_at,
+            "expires_at": session.expires_at,
+            "revoked_at": session.revoked_at,
+            "is_current": session.id == authenticated_session.session.id,
+        }
+        for session in sessions
+    ]
+
+
+@router.delete("/sessions/{session_id}")
+def revoke_user_session(
+    session_id: str,
+    authenticated_session=Depends(get_current_session),
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    """Revoke one session belonging to the current user."""
+
+    session = db.scalar(
+        select(UserSession).where(
+            UserSession.id == session_id,
+            UserSession.user_id == authenticated_session.user.id,
+        )
+    )
+
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found.",
+        )
+
+    revoke_session(db, session)
+
+    return {
+        "message": "Session revoked successfully.",
+    }
+
 
 @router.post("/logout")
 def logout(

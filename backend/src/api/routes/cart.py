@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from src.agents.tools.cart import _fetch_menu_items, _valid_price, _valid_quantity
+from src.agents.tools.order import cancel_order
 from src.api.dependencies import AuthenticatedSession, get_current_session
 from src.configs.config import config
 from src.db.database import get_db
@@ -618,4 +619,110 @@ def checkout_authenticated_cart(
                 user_id=auth.user.id,
             )
         ),
+    }
+
+@router.delete("/orders/{order_id}")
+def cancel_authenticated_order(
+    order_id: str,
+    auth: AuthenticatedSession = Depends(
+        get_current_session
+    ),
+):
+    """
+    Cancel an authenticated user's order.
+
+    The authenticated session is validated before the existing order
+    cancellation tool is invoked. The menu backend remains the source
+    of truth for the cancellation itself.
+    """
+    requested_order_id = order_id.strip()
+
+    if not requested_order_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Order ID is required.",
+        )
+
+    order_url = (
+        f"{config.MENU_BACKEND_URL.rstrip('/')}"
+        f"/orders/{requested_order_id}"
+    )
+
+    try:
+        response = requests.delete(
+            order_url,
+            timeout=10,
+        )
+
+        if response.status_code == 404:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"Order {requested_order_id} "
+                    "was not found."
+                ),
+            )
+
+        response.raise_for_status()
+        order = response.json()
+
+        if (
+            not isinstance(order, dict)
+            or not isinstance(
+                order.get("order_id"),
+                str,
+            )
+        ):
+            raise ValueError(
+                "Order API response is missing order_id"
+            )
+
+        if order.get("status") != "cancelled":
+            raise ValueError(
+                "Order API response did not confirm cancellation"
+            )
+
+    except HTTPException:
+        raise
+
+    except requests.Timeout as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Unable to cancel order: the ordering "
+                "service timed out."
+            ),
+        ) from exc
+
+    except requests.ConnectionError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Unable to cancel order: the ordering "
+                "service is unavailable."
+            ),
+        ) from exc
+
+    except requests.RequestException as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Unable to cancel order: the ordering "
+                "service returned an error."
+            ),
+        ) from exc
+
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Unable to cancel order: the ordering "
+                "service returned an invalid response."
+            ),
+        ) from exc
+
+    return {
+        "success": True,
+        "order_id": order["order_id"],
+        "status": "cancelled",
     }

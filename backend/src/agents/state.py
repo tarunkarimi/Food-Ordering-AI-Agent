@@ -28,7 +28,7 @@ class Cart(BaseModel):
     items: List[CartItem] = Field(default_factory=list)
 
 
-class OrderState(TypedDict):
+class OrderState(TypedDict, total=False):
     messages: Annotated[list, add_messages]
     cart: Optional[Cart]
     orderId: Optional[str]
@@ -37,3 +37,8 @@ class OrderState(TypedDict):
     restaurant_name: str
     subdomain: str
     finished: bool
+
+    # Optional because legacy/anonymous agent flows do not always
+    # have an authenticated user. Authenticated chat routes populate
+    # this field when persistence is required.
+    user_id: Optional[int]

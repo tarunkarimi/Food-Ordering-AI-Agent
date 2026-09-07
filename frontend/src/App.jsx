@@ -600,32 +600,14 @@ function App() {
       setPlacingOrder(true);
 
       const response = await fetchWithTimeout(
-        `${MENU_API}/orders`,
+        "/api/cart/checkout",
         {
           method: "POST",
           headers: {
-            "Content-Type":
-              "application/json",
+            "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            restaurant_name:
-              restaurant,
-            subdomain: "test",
-            items: cart.map(
-              (item) => ({
-                item_id:
-                  item.item_id ||
-                  item.id,
-                title: item.title,
-                quantity:
-                  item.quantity,
-                base_price:
-                  item.base_price,
-                variation:
-                  item.variation ||
-                  null,
-              })
-            ),
+            confirm: true,
           }),
         }
       );
@@ -642,15 +624,15 @@ function App() {
 
       setOrder(data);
 
-      // The order is already confirmed by the menu backend.
-      // Keep LangGraph in sync without delaying the confirmation UI.
-      void clearCart();
+      // The persistent checkout clears the server cart;
+      // refresh the UI from that source of truth.
+      await syncCartFromAI(sessionId);
 
       setMessages((previous) => [
         ...previous,
         {
           role: "assistant",
-          content: `Your order ${data.order_id} has been confirmed! 🎉 Your subtotal is ₹${Number(
+          content: `Your order ${data.order_id} has been confirmed! ?? Your subtotal is ?${Number(
             data.subtotal || 0
           ).toFixed(2)}.`,
         },
@@ -674,13 +656,15 @@ function App() {
   }
 
   async function cancelOrder() {
-    if (!order || cancellingOrder) return;
+    if (!order || cancellingOrder) {
+      return;
+    }
 
     try {
       setCancellingOrder(true);
 
       const response = await fetchWithTimeout(
-        `${MENU_API}/orders/${order.order_id}`,
+        `/api/cart/orders/${order.order_id}`,
         {
           method: "DELETE",
         }
@@ -692,22 +676,29 @@ function App() {
       if (!response.ok) {
         throw new Error(
           data.detail ||
-            "Cancellation failed"
+            "Unable to cancel order"
         );
       }
 
-      setOrder(data);
+      setOrder((previous) =>
+        previous
+          ? {
+              ...previous,
+              status: "cancelled",
+            }
+          : previous
+      );
 
       setMessages((previous) => [
         ...previous,
         {
           role: "assistant",
-          content: `Order ${data.order_id} has been cancelled.`,
+          content: `Your order ${data.order_id} has been cancelled successfully.`,
         },
       ]);
     } catch (error) {
       console.error(
-        "Cancellation error:",
+        "Cancel order error:",
         error
       );
 

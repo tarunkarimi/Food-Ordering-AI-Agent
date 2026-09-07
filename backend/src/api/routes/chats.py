@@ -2,7 +2,7 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -13,6 +13,7 @@ from src.agents.tools.cart import (
     _valid_quantity,
     _valid_price,
 )
+from src.api.dependencies import AuthenticatedSession, get_current_session
 
 
 logger = logging.getLogger(__name__)
@@ -108,17 +109,34 @@ class ClearCartRequest(BaseModel):
 # Helpers
 # ------------------------------------------------------------------
 
-def _session_config(session_id: str):
+def _session_config(
+    session_id: str,
+    user_id: Optional[int] = None,
+):
+    """
+    Build a user-isolated LangGraph thread configuration.
+
+    Authenticated conversations are namespaced by user_id so a
+    caller-controlled session_id can never collide with another
+    user's conversation thread.
+    """
+    clean_session_id = session_id.strip()
+
+    if user_id is None:
+        thread_id = clean_session_id
+    else:
+        thread_id = f"user:{user_id}:session:{clean_session_id}"
+
     return {
         "configurable": {
-            "thread_id": session_id.strip(),
+            "thread_id": thread_id,
         }
     }
 
 
-def _get_existing_cart(session_id: str) -> Cart:
+def _get_existing_cart(session_id: str, user_id: Optional[int] = None) -> Cart:
     state = chatbot_agent.get_state(
-        _session_config(session_id)
+        _session_config(session_id, user_id=user_id)
     )
 
     values = getattr(state, "values", None)
@@ -168,6 +186,9 @@ def _authoritative_unit(
 
     authoritative_price = menu_item.get("base_price")
 
+    if not _valid_quantity(quantity):
+        raise ValueError("Quantity must be greater than zero.")
+
     if not _valid_price(authoritative_price):
         raise ValueError(
             "That menu item has invalid pricing and cannot be added."
@@ -182,7 +203,6 @@ def _authoritative_unit(
 
     selected_variation_id = "no_variant"
     selected_variation = None
-
     cart_unit_price = authoritative_price
 
     if variations:
@@ -408,7 +428,10 @@ def _remove_from_cart(
 # ------------------------------------------------------------------
 
 @router.get("/state")
-def get_current_state(session_id: str):
+def get_current_state(
+    session_id: str,
+    auth: AuthenticatedSession = Depends(get_current_session),
+):
     """
     Return the current LangGraph state for a conversation session.
     """
@@ -418,7 +441,10 @@ def get_current_state(session_id: str):
             raise ValueError("session_id is missing.")
 
         state = chatbot_agent.get_state(
-            _session_config(session_id)
+            _session_config(
+                session_id,
+                user_id=auth.user.id,
+            )
         )
 
         return state
@@ -431,7 +457,7 @@ def get_current_state(session_id: str):
 
     except Exception:
         logger.exception(
-            "Failed to retrieve state for session."
+            "Failed to retrieve state for authenticated session."
         )
 
         raise HTTPException(
@@ -445,7 +471,10 @@ def get_current_state(session_id: str):
 # ------------------------------------------------------------------
 
 @router.post("/cart/add")
-def manual_add_to_cart(request: ManualCartRequest):
+def manual_add_to_cart(
+    request: ManualCartRequest,
+    auth: AuthenticatedSession = Depends(get_current_session),
+):
     try:
         if not request.session_id.strip():
             raise ValueError("session_id is missing.")
@@ -483,7 +512,8 @@ def manual_add_to_cart(request: ManualCartRequest):
             )
 
         current_cart = _get_existing_cart(
-            request.session_id
+            request.session_id,
+            user_id=auth.user.id,
         )
 
         updated_cart = _add_to_cart(
@@ -494,11 +524,15 @@ def manual_add_to_cart(request: ManualCartRequest):
         )
 
         chatbot_agent.update_state(
-            _session_config(request.session_id),
+            _session_config(
+                request.session_id,
+                user_id=auth.user.id,
+            ),
             {
                 "cart": updated_cart,
                 "restaurant_name": request.restaurant_name.strip(),
                 "subdomain": request.subdomain.strip(),
+                "user_id": auth.user.id,
                 "order_confirmation_pending": False,
             },
         )
@@ -516,7 +550,7 @@ def manual_add_to_cart(request: ManualCartRequest):
 
     except Exception:
         logger.exception(
-            "Unexpected error while adding item to cart."
+            "Unexpected error while adding item to authenticated cart."
         )
 
         raise HTTPException(
@@ -530,7 +564,10 @@ def manual_add_to_cart(request: ManualCartRequest):
 # ------------------------------------------------------------------
 
 @router.post("/cart/remove")
-def manual_remove_from_cart(request: ManualCartItemRequest):
+def manual_remove_from_cart(
+    request: ManualCartItemRequest,
+    auth: AuthenticatedSession = Depends(get_current_session),
+):
     try:
         if not request.session_id.strip():
             raise ValueError("session_id is missing.")
@@ -542,7 +579,8 @@ def manual_remove_from_cart(request: ManualCartItemRequest):
             raise ValueError("title is required.")
 
         current_cart = _get_existing_cart(
-            request.session_id
+            request.session_id,
+            user_id=auth.user.id,
         )
 
         updated_cart = _remove_from_cart(
@@ -554,9 +592,13 @@ def manual_remove_from_cart(request: ManualCartItemRequest):
         )
 
         chatbot_agent.update_state(
-            _session_config(request.session_id),
+            _session_config(
+                request.session_id,
+                user_id=auth.user.id,
+            ),
             {
                 "cart": updated_cart,
+                "user_id": auth.user.id,
                 "order_confirmation_pending": False,
                 "finished": False,
             },
@@ -575,7 +617,7 @@ def manual_remove_from_cart(request: ManualCartItemRequest):
 
     except Exception:
         logger.exception(
-            "Unexpected error while removing item from cart."
+            "Unexpected error while removing item from authenticated cart."
         )
 
         raise HTTPException(
@@ -589,15 +631,22 @@ def manual_remove_from_cart(request: ManualCartItemRequest):
 # ------------------------------------------------------------------
 
 @router.post("/cart/clear")
-def manual_clear_cart(request: ClearCartRequest):
+def manual_clear_cart(
+    request: ClearCartRequest,
+    auth: AuthenticatedSession = Depends(get_current_session),
+):
     try:
         if not request.session_id.strip():
             raise ValueError("session_id is missing.")
 
         chatbot_agent.update_state(
-            _session_config(request.session_id),
+            _session_config(
+                request.session_id,
+                user_id=auth.user.id,
+            ),
             {
                 "cart": Cart(items=[]),
+                "user_id": auth.user.id,
                 "order_confirmation_pending": False,
                 "finished": False,
             },
@@ -616,7 +665,7 @@ def manual_clear_cart(request: ClearCartRequest):
 
     except Exception:
         logger.exception(
-            "Unexpected error while clearing cart."
+            "Unexpected error while clearing authenticated cart."
         )
 
         raise HTTPException(
@@ -630,10 +679,16 @@ def manual_clear_cart(request: ClearCartRequest):
 # ------------------------------------------------------------------
 
 @router.post("/orders")
-async def chat_order(request: ChatRequest):
+async def chat_order(
+    request: ChatRequest,
+    auth: AuthenticatedSession = Depends(get_current_session),
+):
     """
-    Process a user message through the food-ordering agent
-    and stream AI responses using Server-Sent Events (SSE).
+    Process a user message through the food-ordering agent and stream
+    AI responses using Server-Sent Events (SSE).
+
+    The authenticated user's ID is included in graph state and the
+    LangGraph thread is namespaced by that user.
     """
 
     session_id = request.session_id.strip()
@@ -641,7 +696,10 @@ async def chat_order(request: ChatRequest):
     restaurant_name = request.restaurant_name.strip()
     subdomain = request.subdomain.strip()
 
-    graph_config = _session_config(session_id)
+    graph_config = _session_config(
+        session_id,
+        user_id=auth.user.id,
+    )
 
     def generate_sse():
         try:
@@ -655,6 +713,7 @@ async def chat_order(request: ChatRequest):
                     ],
                     "restaurant_name": restaurant_name,
                     "subdomain": subdomain,
+                    "user_id": auth.user.id,
                 },
                 graph_config,
                 stream_mode="values",
@@ -683,7 +742,8 @@ async def chat_order(request: ChatRequest):
                         None,
                     ) == "error":
                         logger.error(
-                            "Tool execution failed for session."
+                            "Tool execution failed for authenticated user %s.",
+                            auth.user.id,
                         )
 
                 if getattr(
@@ -699,7 +759,8 @@ async def chat_order(request: ChatRequest):
 
                     if tool_calls:
                         logger.info(
-                            "AI requested tool execution for session."
+                            "AI requested tool execution for authenticated user %s.",
+                            auth.user.id,
                         )
 
                 if message_type == "AIMessage":
@@ -741,7 +802,8 @@ async def chat_order(request: ChatRequest):
 
         except Exception:
             logger.exception(
-                "Unexpected error while streaming AI response."
+                "Unexpected error while streaming AI response for authenticated user %s.",
+                auth.user.id,
             )
 
             error_data = {

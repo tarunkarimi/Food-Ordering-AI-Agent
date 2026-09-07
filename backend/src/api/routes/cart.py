@@ -1,4 +1,4 @@
-﻿"""Authenticated persistent-cart API."""
+"""Authenticated persistent-cart API."""
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -132,7 +132,15 @@ def _authoritative_item(
 
         raw_variation_price = selected_variation.get("price")
 
-        if not _valid_price(raw_variation_price):
+        try:
+            variation_price = float(raw_variation_price)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=409,
+                detail="That menu variation has invalid pricing.",
+            )
+
+        if not _valid_price(variation_price):
             raise HTTPException(
                 status_code=409,
                 detail="That menu variation has invalid pricing.",
@@ -141,8 +149,6 @@ def _authoritative_item(
         variation_name = str(
             selected_variation.get("name", "")
         ).strip()
-
-        variation_price = float(raw_variation_price)
         authoritative_price = variation_price
 
     elif variations and not normalized_variation_id:
@@ -726,3 +732,4 @@ def cancel_authenticated_order(
         "order_id": order["order_id"],
         "status": "cancelled",
     }
+

@@ -290,6 +290,32 @@ export default function AuthGate({
     useState(Boolean(getAccessToken()));
 
   useEffect(() => {
+    function handleAuthExpired() {
+      setUser(null);
+      setError(
+        "Your session has expired. Please sign in again."
+      );
+      setMode(MODES.LOGIN);
+      setVerificationUser(null);
+      setVerificationCode("");
+      setLoginOtpIdentity(null);
+      setLoginOtpCode("");
+    }
+
+    window.addEventListener(
+      "food-agent-auth-expired",
+      handleAuthExpired
+    );
+
+    return () => {
+      window.removeEventListener(
+        "food-agent-auth-expired",
+        handleAuthExpired
+      );
+    };
+  }, []);
+
+  useEffect(() => {
     let active = true;
 
     async function restoreSession() {

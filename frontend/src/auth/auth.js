@@ -136,6 +136,20 @@ if (!window.__foodAgentAuthenticatedFetchInstalled) {
     return originalFetch(input, {
       ...init,
       headers,
+    }).then((response) => {
+      if (
+        response.status === 401 &&
+        token &&
+        isApiRequest &&
+        !url.startsWith("/api/auth/")
+      ) {
+        clearAuth();
+        window.dispatchEvent(
+          new CustomEvent("food-agent-auth-expired")
+        );
+      }
+
+      return response;
     });
   };
 

@@ -17,6 +17,11 @@ from src.agents.tools.cart import (
 from src.agents.tools.order import cancel_order, get_order_status
 from src.agents.tools.reorder import reorder_previous_order
 from src.agents.tools.personalization import get_my_food_preferences
+from src.agents.tools.preferences import (
+    get_my_preferences,
+    update_my_preferences,
+)
+from src.agents.tools.recommendations import get_personalized_recommendations
 
 from src.db.database import SessionLocal
 from src.services.langgraph_cart import (
@@ -45,6 +50,9 @@ _tools = [
     cancel_order,
     reorder_previous_order,
     get_my_food_preferences,
+    get_my_preferences,
+    update_my_preferences,
+    get_personalized_recommendations,
 ]
 
 _model_with_tools = _model.bind_tools(_tools)
@@ -95,9 +103,6 @@ def chatbot(state: OrderState) -> OrderState:
 
     current_cart = state.get("cart")
 
-    # On the first authenticated turn, hydrate LangGraph from the
-    # persistent database cart. On subsequent turns, the graph state
-    # already contains the current cart produced by the tools.
     if current_cart is None:
         current_cart = _load_persistent_cart(state)
 
@@ -122,8 +127,6 @@ def chatbot(state: OrderState) -> OrderState:
     else:
         new_output = AIMessage(content=formatted_welcome_msg)
 
-    # Persist every authenticated cart state produced by LangGraph.
-    # This covers add, remove, clear and successful checkout.
     _persist_cart(state, current_cart)
 
     return {
@@ -140,5 +143,3 @@ def chatbot(state: OrderState) -> OrderState:
         "user_id": state.get("user_id"),
         "finished": state.get("finished", False),
     }
-
-

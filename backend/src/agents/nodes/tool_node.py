@@ -1,4 +1,4 @@
-﻿from typing import Any
+from typing import Any
 
 from langchain_core.messages import AIMessage
 from langgraph.prebuilt import ToolNode
@@ -16,6 +16,11 @@ from src.agents.tools.cart import (
 from src.agents.tools.order import cancel_order, get_order_status
 from src.agents.tools.reorder import reorder_previous_order
 from src.agents.tools.personalization import get_my_food_preferences
+from src.agents.tools.preferences import (
+    get_my_preferences,
+    update_my_preferences,
+)
+from src.agents.tools.recommendations import get_personalized_recommendations
 
 
 tools = [
@@ -29,22 +34,19 @@ tools = [
     get_order_status,
     cancel_order,
     reorder_previous_order,
-        get_my_food_preferences,
+    get_my_food_preferences,
+    get_my_preferences,
+    update_my_preferences,
+    get_personalized_recommendations,
 ]
 
 
-# ToolNode remains responsible for:
-# - Pydantic argument validation
-# - InjectedState
-# - InjectedToolCallId
-#
-# We execute calls sequentially so multiple cart mutations from one
-# model response see the state produced by the previous mutation.
 _single_tool_node = ToolNode(tools)
 
 
 def _apply_result(state: dict[str, Any], result: Any) -> list[Any]:
     """Apply a ToolNode result to local state and return tool messages."""
+
     messages: list[Any] = []
 
     if isinstance(result, Command):
@@ -89,13 +91,8 @@ def _apply_result(state: dict[str, Any], result: Any) -> list[Any]:
 
 
 def tool_node(state, config=None):
-    """
-    Execute Gemini tool calls sequentially.
+    """Execute Gemini tool calls sequentially."""
 
-    LangGraph's ToolNode performs argument validation and injected
-    argument handling. This wrapper only controls sequential execution
-    and applies each tool's state update before the next tool runs.
-    """
     messages = state.get("messages", [])
 
     if not messages:
@@ -149,4 +146,3 @@ def tool_node(state, config=None):
         ),
         "finished": working_state.get("finished", False),
     }
-

@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 
 import uvicorn
 from fastapi import FastAPI
@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.api.routes.auth import router as auth_router
 from src.api.routes.cart import router as cart_router
 from src.api.routes.orders import router as orders_router
+from src.api.routes.preferences import router as preferences_router
 from src.api.routes.reorder import router as reorder_router
 from src.api.routes.chats import router as chat_router
 from src.configs.config import config
@@ -63,6 +64,12 @@ app.include_router(
     reorder_router,
     prefix="/api/orders",
     tags=["orders"],
+)
+
+app.include_router(
+    preferences_router,
+    prefix="/api/preferences",
+    tags=["preferences"],
 )
 
 app.include_router(

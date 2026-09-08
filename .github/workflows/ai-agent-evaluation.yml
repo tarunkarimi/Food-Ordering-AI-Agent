@@ -1,0 +1,43 @@
+﻿name: AI Agent Evaluation
+
+on:
+  push:
+    branches:
+      - feature/persistence-build-001
+  pull_request:
+    branches:
+      - feature/persistence-build-001
+
+jobs:
+  ai-agent-evaluation:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile backend
+        run: python -m compileall src -q
+
+      - name: Run AI evaluation framework
+        run: python -m pytest tests/test_evaluation_framework.py tests/test_evaluation_thresholds.py -q
+
+      - name: Run AI evaluation report
+        run: python -m src.evaluation
+
+      - name: Run backend regression
+        run: python -m pytest -q

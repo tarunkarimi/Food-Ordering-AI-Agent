@@ -1,4 +1,4 @@
-﻿from langchain_core.messages.ai import AIMessage
+from langchain_core.messages.ai import AIMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from src.agents.state import OrderState, Cart
@@ -44,7 +44,7 @@ _tools = [
     get_order_status,
     cancel_order,
     reorder_previous_order,
-        get_my_food_preferences,
+    get_my_food_preferences,
 ]
 
 _model_with_tools = _model.bind_tools(_tools)
@@ -140,4 +140,5 @@ def chatbot(state: OrderState) -> OrderState:
         "user_id": state.get("user_id"),
         "finished": state.get("finished", False),
     }
+
 

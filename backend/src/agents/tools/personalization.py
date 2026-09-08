@@ -1,4 +1,4 @@
-﻿"""AI tools for authenticated user personalization."""
+"""AI tools for authenticated user personalization."""
 
 from typing import Any
 
@@ -25,9 +25,22 @@ def get_my_food_preferences(
     user_id: int,
     restaurant_name: str | None = None,
 ) -> dict[str, Any]:
-    """Inspect the authenticated user's previous orders and summarize their
-    food preferences. Use this for questions about usual, favorite, previous,
-    or commonly ordered food. This tool does not modify the cart or place an order.
+    """Inspect the authenticated user's previous orders and summarize
+    their food preferences.
+
+    Use this for questions about:
+    - usual orders
+    - favorite or commonly ordered food
+    - previous purchases
+    - recommendations based on ordering history
+
+    This tool provides historical preference signals only.
+
+    Historical prices and historical availability must never be treated
+    as current. For a recommendation intended for an actual purchase,
+    combine this tool's result with the current menu data from get_menu.
+
+    This tool does not modify the cart or place an order.
     """
 
     if not user_id:

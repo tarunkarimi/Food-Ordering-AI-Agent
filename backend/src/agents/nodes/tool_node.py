@@ -14,6 +14,8 @@ from src.agents.tools.cart import (
     confirm_order,
 )
 from src.agents.tools.order import cancel_order, get_order_status
+from src.agents.tools.reorder import reorder_previous_order
+from src.agents.tools.personalization import get_my_food_preferences
 
 
 tools = [
@@ -26,6 +28,8 @@ tools = [
     confirm_order,
     get_order_status,
     cancel_order,
+    reorder_previous_order,
+        get_my_food_preferences,
 ]
 
 
@@ -145,3 +149,4 @@ def tool_node(state, config=None):
         ),
         "finished": working_state.get("finished", False),
     }
+

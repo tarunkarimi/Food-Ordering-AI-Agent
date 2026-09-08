@@ -6,6 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.routes.auth import router as auth_router
 from src.api.routes.cart import router as cart_router
+from src.api.routes.orders import router as orders_router
+from src.api.routes.reorder import router as reorder_router
 from src.api.routes.chats import router as chat_router
 from src.configs.config import config
 
@@ -49,6 +51,18 @@ app.include_router(
     cart_router,
     prefix="/api/cart",
     tags=["cart"],
+)
+
+app.include_router(
+    orders_router,
+    prefix="/api/orders",
+    tags=["orders"],
+)
+
+app.include_router(
+    reorder_router,
+    prefix="/api/orders",
+    tags=["orders"],
 )
 
 app.include_router(

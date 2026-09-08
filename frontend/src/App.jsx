@@ -12,6 +12,7 @@ import {
   Loader2,
 } from "lucide-react";
 import "./App.css";
+import OrderHistoryPanel from "./components/OrderHistoryPanel";
 
 const MENU_API = import.meta.env.VITE_MENU_API_URL || "/menu-api";
 const AI_API = import.meta.env.VITE_AI_API_URL || "";
@@ -498,10 +499,14 @@ function App() {
     }
   }
 
-  async function sendMessage(event) {
-    event.preventDefault();
+  async function sendMessage(event, directMessage = null) {
+    if (event) {
+      event.preventDefault();
+    }
 
-    const message = input.trim();
+    const message = (
+      directMessage !== null ? directMessage : input
+    ).trim();
 
     if (!message || sending) return;
 
@@ -715,6 +720,12 @@ function App() {
   }
 
   return (
+    <>
+      <OrderHistoryPanel
+        onReorder={(orderId) =>
+          sendMessage(null, `Reorder order ${orderId}`)
+        }
+      />
     <>
       <div className="app">
       <header className="topbar">
@@ -1217,6 +1228,7 @@ function App() {
           </div>
         </div>
       )}
+    </>
     </>
   );
 }

@@ -15,6 +15,8 @@ from src.agents.tools.cart import (
     confirm_order,
 )
 from src.agents.tools.order import cancel_order, get_order_status
+from src.agents.tools.reorder import reorder_previous_order
+from src.agents.tools.personalization import get_my_food_preferences
 
 from src.db.database import SessionLocal
 from src.services.langgraph_cart import (
@@ -41,6 +43,8 @@ _tools = [
     confirm_order,
     get_order_status,
     cancel_order,
+    reorder_previous_order,
+        get_my_food_preferences,
 ]
 
 _model_with_tools = _model.bind_tools(_tools)
@@ -136,3 +140,4 @@ def chatbot(state: OrderState) -> OrderState:
         "user_id": state.get("user_id"),
         "finished": state.get("finished", False),
     }
+

@@ -1,4 +1,4 @@
-"""Authenticated persistent-cart API."""
+﻿"""Authenticated persistent-cart API."""
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -15,6 +15,10 @@ from src.services.cart import (
     get_cart,
     remove_item,
     update_item,
+)
+from src.services.order_history import (
+    create_order_history,
+    update_order_history_status,
 )
 
 import requests
@@ -310,6 +314,18 @@ def _build_checkout_items(cart, menu_items):
                 ),
             )
 
+        stored_price = round(float(cart_item.unit_price), 2)
+        current_price = round(float(authoritative["unit_price"]), 2)
+
+        if stored_price != current_price:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"The price for '{cart_item.title}' "
+                    f"has changed from {stored_price:.2f} "
+                    f"to {current_price:.2f}."
+                ),
+            )
         order_items.append(
             {
                 "item_id": authoritative["item_id"],
@@ -608,6 +624,18 @@ def checkout_authenticated_cart(
         for item in order_items
     )
 
+    create_order_history(
+        db,
+        user_id=auth.user.id,
+        order_id=order_id,
+        restaurant_name=cart.restaurant_name,
+        subdomain=cart.subdomain,
+        status=status,
+        subtotal=float(subtotal),
+        total_items=total_items,
+        items=order_items,
+    )
+
     clear_cart(
         db,
         user_id=auth.user.id,
@@ -633,6 +661,7 @@ def cancel_authenticated_order(
     auth: AuthenticatedSession = Depends(
         get_current_session
     ),
+    db: Session = Depends(get_db),
 ):
     """
     Cancel an authenticated user's order.
@@ -727,9 +756,17 @@ def cancel_authenticated_order(
             ),
         ) from exc
 
+    update_order_history_status(
+        db,
+        user_id=auth.user.id,
+        order_id=order["order_id"],
+        status="cancelled",
+    )
+
     return {
         "success": True,
         "order_id": order["order_id"],
         "status": "cancelled",
     }
+
 

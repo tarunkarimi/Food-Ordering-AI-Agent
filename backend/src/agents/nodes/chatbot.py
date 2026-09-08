@@ -1,4 +1,6 @@
-from langchain_core.messages.ai import AIMessage
+"""Chatbot node."""
+
+from langchain_core.messages import AIMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from src.agents.state import OrderState, Cart
@@ -22,6 +24,7 @@ from src.agents.tools.preferences import (
     update_my_preferences,
 )
 from src.agents.tools.recommendations import get_personalized_recommendations
+from src.agents.tools.advanced_recommendation import advanced_recommend_food
 
 from src.db.database import SessionLocal
 from src.services.langgraph_cart import (
@@ -53,6 +56,7 @@ _tools = [
     get_my_preferences,
     update_my_preferences,
     get_personalized_recommendations,
+    advanced_recommend_food,
 ]
 
 _model_with_tools = _model.bind_tools(_tools)

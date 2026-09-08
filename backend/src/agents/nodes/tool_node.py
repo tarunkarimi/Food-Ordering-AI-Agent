@@ -1,3 +1,5 @@
+"""LangGraph tool execution node."""
+
 from typing import Any
 
 from langchain_core.messages import AIMessage
@@ -21,6 +23,7 @@ from src.agents.tools.preferences import (
     update_my_preferences,
 )
 from src.agents.tools.recommendations import get_personalized_recommendations
+from src.agents.tools.advanced_recommendation import advanced_recommend_food
 
 
 tools = [
@@ -38,6 +41,7 @@ tools = [
     get_my_preferences,
     update_my_preferences,
     get_personalized_recommendations,
+    advanced_recommend_food,
 ]
 
 
@@ -45,8 +49,6 @@ _single_tool_node = ToolNode(tools)
 
 
 def _apply_result(state: dict[str, Any], result: Any) -> list[Any]:
-    """Apply a ToolNode result to local state and return tool messages."""
-
     messages: list[Any] = []
 
     if isinstance(result, Command):
@@ -83,7 +85,9 @@ def _apply_result(state: dict[str, Any], result: Any) -> list[Any]:
 
     if isinstance(result, list):
         for item in result:
-            messages.extend(_apply_result(state, item))
+            messages.extend(
+                _apply_result(state, item)
+            )
 
         return messages
 
@@ -118,9 +122,9 @@ def tool_node(state, config=None):
             tool_calls=[tool_call],
         )
 
-        working_state["messages"] = working_messages + [
-            single_call_message
-        ]
+        working_state["messages"] = (
+            working_messages + [single_call_message]
+        )
 
         result = _single_tool_node.invoke(
             working_state,

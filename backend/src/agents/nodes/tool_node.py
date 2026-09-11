@@ -1,4 +1,4 @@
-"""LangGraph tool execution node."""
+﻿"""LangGraph tool execution node."""
 
 from typing import Any
 
@@ -24,6 +24,12 @@ from src.agents.tools.preferences import (
 )
 from src.agents.tools.recommendations import get_personalized_recommendations
 from src.agents.tools.advanced_recommendation import advanced_recommend_food
+from src.agents.tools.testing import (
+    generate_ai_test_cases,
+    generate_ai_edge_cases,
+    analyze_ai_test_failure,
+    recommend_ai_regression_tests,
+)
 
 
 tools = [
@@ -42,6 +48,10 @@ tools = [
     update_my_preferences,
     get_personalized_recommendations,
     advanced_recommend_food,
+    generate_ai_test_cases,
+    generate_ai_edge_cases,
+    analyze_ai_test_failure,
+    recommend_ai_regression_tests,
 ]
 
 
@@ -150,3 +160,4 @@ def tool_node(state, config=None):
         ),
         "finished": working_state.get("finished", False),
     }
+

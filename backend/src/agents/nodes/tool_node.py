@@ -1,5 +1,6 @@
 ﻿"""LangGraph tool execution node."""
 
+import logging
 from typing import Any
 
 from langchain_core.messages import AIMessage
@@ -30,6 +31,10 @@ from src.agents.tools.testing import (
     analyze_ai_test_failure,
     recommend_ai_regression_tests,
 )
+from src.observability.logging import Timer, log_event
+
+
+logger = logging.getLogger(__name__)
 
 
 tools = [
@@ -127,6 +132,11 @@ def tool_node(state, config=None):
     new_tool_messages: list[Any] = []
 
     for tool_call in tool_calls:
+        tool_name = tool_call.get(
+            "name",
+            "unknown",
+        )
+
         single_call_message = AIMessage(
             content=last_message.content,
             tool_calls=[tool_call],
@@ -136,15 +146,44 @@ def tool_node(state, config=None):
             working_messages + [single_call_message]
         )
 
-        result = _single_tool_node.invoke(
-            working_state,
-            config=config,
+        timer = Timer()
+
+        log_event(
+            logger,
+            "agent_tool_started",
+            tool_name=tool_name,
+            authenticated=working_state.get("user_id") is not None,
         )
 
-        produced_messages = _apply_result(
-            working_state,
-            result,
-        )
+        try:
+            result = _single_tool_node.invoke(
+                working_state,
+                config=config,
+            )
+
+            produced_messages = _apply_result(
+                working_state,
+                result,
+            )
+
+            log_event(
+                logger,
+                "agent_tool_completed",
+                tool_name=tool_name,
+                authenticated=working_state.get("user_id") is not None,
+                duration_ms=timer.elapsed_ms,
+            )
+
+        except Exception:
+            log_event(
+                logger,
+                "agent_tool_failed",
+                level=logging.ERROR,
+                tool_name=tool_name,
+                authenticated=working_state.get("user_id") is not None,
+                duration_ms=timer.elapsed_ms,
+            )
+            raise
 
         new_tool_messages.extend(produced_messages)
         working_messages.extend(produced_messages)

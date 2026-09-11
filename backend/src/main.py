@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 
 import uvicorn
 from fastapi import FastAPI
@@ -11,6 +11,8 @@ from src.api.routes.preferences import router as preferences_router
 from src.api.routes.reorder import router as reorder_router
 from src.api.routes.chats import router as chat_router
 from src.configs.config import config
+from src.observability.middleware import ObservabilityMiddleware
+from src.observability.health import get_readiness
 
 
 logging.basicConfig(
@@ -32,6 +34,11 @@ frontend_origins = [
     for origin in config.FRONTEND_ORIGINS.split(",")
     if origin.strip()
 ]
+
+
+app.add_middleware(
+    ObservabilityMiddleware,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -87,6 +94,11 @@ def read_root():
     }
 
 
+@app.get("/ready")
+def readiness():
+    return get_readiness()
+
+
 @app.get("/health")
 def health_check():
     return {
@@ -96,7 +108,10 @@ def health_check():
 
 
 def main():
-    logger.info("Starting AI backend on port %s", config.PORT)
+    logger.info(
+        "Starting AI backend on port %s",
+        config.PORT,
+    )
 
     uvicorn.run(
         app,

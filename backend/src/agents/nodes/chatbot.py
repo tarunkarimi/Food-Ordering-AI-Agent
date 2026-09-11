@@ -1,5 +1,7 @@
 ﻿"""Chatbot node."""
 
+import logging
+
 from langchain_core.messages import AIMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
@@ -37,6 +39,10 @@ from src.services.langgraph_cart import (
     load_langgraph_cart,
     persist_langgraph_cart,
 )
+from src.observability.logging import Timer, log_event
+
+
+logger = logging.getLogger(__name__)
 
 
 _model = ChatGoogleGenerativeAI(
@@ -68,6 +74,7 @@ _tools = [
     analyze_ai_test_failure,
     recommend_ai_regression_tests,
 ]
+
 
 _model_with_tools = _model.bind_tools(_tools)
 
@@ -135,11 +142,51 @@ def chatbot(state: OrderState) -> OrderState:
     )
 
     if state["messages"]:
-        new_output = _model_with_tools.invoke(
-            [formatted_system_instruction] + state["messages"]
+        timer = Timer()
+
+        log_event(
+            logger,
+            "agent_invocation_started",
+            restaurant=state.get("restaurant_name"),
+            authenticated=state.get("user_id") is not None,
         )
+
+        try:
+            new_output = _model_with_tools.invoke(
+                [formatted_system_instruction] + state["messages"]
+            )
+
+            log_event(
+                logger,
+                "agent_invocation_completed",
+                restaurant=state.get("restaurant_name"),
+                authenticated=state.get("user_id") is not None,
+                tool_call_count=len(
+                    getattr(new_output, "tool_calls", []) or []
+                ),
+                duration_ms=timer.elapsed_ms,
+            )
+
+        except Exception:
+            log_event(
+                logger,
+                "agent_invocation_failed",
+                level=logging.ERROR,
+                restaurant=state.get("restaurant_name"),
+                authenticated=state.get("user_id") is not None,
+                duration_ms=timer.elapsed_ms,
+            )
+            raise
+
     else:
         new_output = AIMessage(content=formatted_welcome_msg)
+
+        log_event(
+            logger,
+            "agent_welcome_response",
+            restaurant=state.get("restaurant_name"),
+            authenticated=state.get("user_id") is not None,
+        )
 
     _persist_cart(state, current_cart)
 

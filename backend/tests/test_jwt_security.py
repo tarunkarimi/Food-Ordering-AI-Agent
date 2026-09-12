@@ -46,7 +46,7 @@ def test_decode_access_token_rejects_wrong_secret() -> None:
             "exp": datetime.now(timezone.utc)
             + timedelta(minutes=30),
         },
-        "wrong-secret",
+        "wrong-secret-that-is-at-least-32-bytes-long",
         algorithm=ALGORITHM,
     )
 

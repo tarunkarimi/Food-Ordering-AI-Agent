@@ -15,3 +15,4 @@ __all__ = [
     "UserSession",
     "UserVerificationCode",
 ]
+from src.db.models.login_attempt import LoginAttempt

@@ -7,8 +7,8 @@ from fastapi.testclient import TestClient
 from src.db.database import SessionLocal
 from src.db.models import User
 from src.main import app
-from src.security.jwt import create_access_token
 from src.security.passwords import hash_password
+from src.services.sessions import create_user_session
 
 
 client = TestClient(app)
@@ -34,6 +34,11 @@ def _create_user(*, is_active: bool = True) -> int:
         return user.id
 
 
+def _create_session_token(user_id: int) -> str:
+    with SessionLocal() as db:
+        return create_user_session(db, user_id)
+
+
 def test_me_requires_authentication() -> None:
     response = client.get("/api/auth/me")
 
@@ -43,7 +48,7 @@ def test_me_requires_authentication() -> None:
 
 def test_me_returns_authenticated_user() -> None:
     user_id = _create_user()
-    token = create_access_token(user_id)
+    token = _create_session_token(user_id)
 
     response = client.get(
         "/api/auth/me",
@@ -77,7 +82,7 @@ def test_me_rejects_invalid_token() -> None:
 
 def test_me_rejects_inactive_user() -> None:
     user_id = _create_user(is_active=False)
-    token = create_access_token(user_id)
+    token = _create_session_token(user_id)
 
     response = client.get(
         "/api/auth/me",

@@ -23,7 +23,7 @@ def _unique_phone() -> str:
 
 def test_login_with_verified_email_and_password_succeeds() -> None:
     email = _unique_email()
-    password = "StrongPassword123"
+    password = "StrongPassword123!"
 
     signup = client.post(
         "/api/auth/signup",
@@ -67,7 +67,7 @@ def test_login_with_verified_email_and_password_succeeds() -> None:
 
 def test_login_with_verified_phone_and_password_succeeds() -> None:
     phone = _unique_phone()
-    password = "StrongPassword123"
+    password = "StrongPassword123!"
 
     signup = client.post(
         "/api/auth/signup",
@@ -113,7 +113,7 @@ def test_login_with_verified_phone_and_password_succeeds() -> None:
 
 def test_login_normalizes_email_case() -> None:
     email = _unique_email()
-    password = "StrongPassword123"
+    password = "StrongPassword123!"
 
     signup = client.post(
         "/api/auth/signup",
@@ -151,7 +151,7 @@ def test_login_rejects_wrong_password() -> None:
         "/api/auth/signup",
         json={
             "email": email,
-            "password": "CorrectPassword123",
+            "password": "CorrectPassword123!",
         },
     )
 
@@ -168,7 +168,7 @@ def test_login_rejects_wrong_password() -> None:
         "/api/auth/login",
         json={
             "email": email,
-            "password": "WrongPassword123",
+            "password": "WrongPassword123!",
         },
     )
 
@@ -209,7 +209,7 @@ def test_login_rejects_unverified_email() -> None:
         "/api/auth/signup",
         json={
             "email": email,
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
@@ -219,15 +219,12 @@ def test_login_rejects_unverified_email() -> None:
         "/api/auth/login",
         json={
             "email": email,
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
-    assert response.status_code == 403
-    assert response.json()["detail"] == (
-        "Account identity is not verified. "
-        "Please verify your email or phone number first."
-    )
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid credentials."
 
 
 def test_login_rejects_unverified_phone() -> None:
@@ -237,7 +234,7 @@ def test_login_rejects_unverified_phone() -> None:
         "/api/auth/signup",
         json={
             "phone": phone,
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
@@ -247,20 +244,17 @@ def test_login_rejects_unverified_phone() -> None:
         "/api/auth/login",
         json={
             "phone": phone,
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
-    assert response.status_code == 403
-    assert response.json()["detail"] == (
-        "Account identity is not verified. "
-        "Please verify your email or phone number first."
-    )
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid credentials."
 
 
 def test_login_rejects_inactive_user() -> None:
     email = _unique_email()
-    password = "StrongPassword123"
+    password = "StrongPassword123!"
 
     signup = client.post(
         "/api/auth/signup",
@@ -288,8 +282,8 @@ def test_login_rejects_inactive_user() -> None:
         },
     )
 
-    assert response.status_code == 403
-    assert response.json()["detail"] == "User account is inactive."
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid credentials."
 
 
 def test_login_rejects_email_and_phone_together() -> None:
@@ -298,7 +292,7 @@ def test_login_rejects_email_and_phone_together() -> None:
         json={
             "email": _unique_email(),
             "phone": _unique_phone(),
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
@@ -309,7 +303,7 @@ def test_login_rejects_missing_identity() -> None:
     response = client.post(
         "/api/auth/login",
         json={
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
@@ -321,7 +315,7 @@ def test_login_rejects_invalid_phone() -> None:
         "/api/auth/login",
         json={
             "phone": "123",
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
@@ -330,7 +324,7 @@ def test_login_rejects_invalid_phone() -> None:
 
 def test_login_does_not_return_password_or_hash() -> None:
     email = _unique_email()
-    password = "StrongPassword123"
+    password = "StrongPassword123!"
 
     signup = client.post(
         "/api/auth/signup",

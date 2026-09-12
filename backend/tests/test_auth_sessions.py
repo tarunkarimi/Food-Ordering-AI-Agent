@@ -155,7 +155,7 @@ def test_logout_revokes_current_session():
 
     assert me_response.status_code == 401
     assert me_response.json()["detail"] == (
-        "Authenticated session has been revoked."
+        "Authentication required."
     )
 
 
@@ -262,7 +262,7 @@ def test_expired_persistent_session_is_rejected():
 
     assert response.status_code == 401
     assert response.json()["detail"] == (
-        "Authenticated session has expired."
+        "Authentication required."
     )
 
 def test_otp_login_creates_persistent_session(monkeypatch):

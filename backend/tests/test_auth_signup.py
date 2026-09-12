@@ -20,7 +20,7 @@ def test_signup_with_email_creates_unverified_user() -> None:
         "/api/auth/signup",
         json={
             "email": f"  {email.upper()}  ",
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
@@ -42,7 +42,7 @@ def test_signup_with_email_creates_unverified_user() -> None:
         assert user is not None
         assert user.email == email
         assert user.phone is None
-        assert user.password_hash != "StrongPassword123"
+        assert user.password_hash != "StrongPassword123!"
 
 
 def test_signup_with_phone_creates_unverified_user() -> None:
@@ -53,7 +53,7 @@ def test_signup_with_phone_creates_unverified_user() -> None:
         "/api/auth/signup",
         json={
             "phone": phone,
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
@@ -75,7 +75,7 @@ def test_signup_with_phone_creates_unverified_user() -> None:
         assert user is not None
         assert user.phone == phone
         assert user.email is None
-        assert user.password_hash != "StrongPassword123"
+        assert user.password_hash != "StrongPassword123!"
 
 
 def test_signup_rejects_duplicate_email() -> None:
@@ -83,7 +83,7 @@ def test_signup_rejects_duplicate_email() -> None:
 
     payload = {
         "email": email,
-        "password": "StrongPassword123",
+        "password": "StrongPassword123!",
     }
 
     first = client.post("/api/auth/signup", json=payload)
@@ -105,7 +105,7 @@ def test_signup_rejects_duplicate_phone() -> None:
         "/api/auth/signup",
         json={
             "phone": phone,
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
@@ -120,7 +120,7 @@ def test_signup_rejects_duplicate_phone() -> None:
         "/api/auth/signup",
         json={
             "phone": formatted_phone,
-            "password": "AnotherPassword123",
+            "password": "AnotherPassword123!",
         },
     )
 
@@ -136,7 +136,7 @@ def test_signup_rejects_email_and_phone_together() -> None:
         json={
             "email": f"both-{uuid4().hex}@example.com",
             "phone": "+919876543212",
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
@@ -147,7 +147,7 @@ def test_signup_rejects_missing_identity() -> None:
     response = client.post(
         "/api/auth/signup",
         json={
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
@@ -159,7 +159,7 @@ def test_signup_rejects_invalid_email() -> None:
         "/api/auth/signup",
         json={
             "email": "not-an-email",
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
@@ -171,7 +171,7 @@ def test_signup_rejects_invalid_phone() -> None:
         "/api/auth/signup",
         json={
             "phone": "123",
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
@@ -197,7 +197,7 @@ def test_signup_normalizes_email_case_for_duplicate_detection() -> None:
         "/api/auth/signup",
         json={
             "email": email.upper(),
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
@@ -208,7 +208,7 @@ def test_signup_normalizes_email_case_for_duplicate_detection() -> None:
         "/api/auth/signup",
         json={
             "email": email.lower(),
-            "password": "AnotherPassword123",
+            "password": "AnotherPassword123!",
         },
     )
 

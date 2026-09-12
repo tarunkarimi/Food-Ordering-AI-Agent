@@ -30,7 +30,7 @@ def test_email_signup_creates_active_signup_verification_code() -> None:
         "/api/auth/signup",
         json={
             "email": email,
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
@@ -65,7 +65,7 @@ def test_phone_signup_creates_active_signup_verification_code() -> None:
         "/api/auth/signup",
         json={
             "phone": phone,
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
@@ -98,7 +98,7 @@ def test_signup_response_never_exposes_verification_code() -> None:
         "/api/auth/signup",
         json={
             "email": email,
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
@@ -119,7 +119,7 @@ def test_signup_verification_code_is_stored_as_a_hash() -> None:
         "/api/auth/signup",
         json={
             "email": email,
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 

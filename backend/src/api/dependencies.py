@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from src.db.database import get_db
 from src.db.models import User, UserSession
-from src.security.jwt import decode_access_token, decode_access_token_claims
+from src.security.jwt import decode_access_token_claims
 
 
 _bearer_scheme = HTTPBearer(auto_error=False)
@@ -95,7 +95,7 @@ def get_current_session(
     if user_session is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authenticated session no longer exists.",
+            detail="Authentication required.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -104,14 +104,14 @@ def get_current_session(
     if user_session.revoked_at is not None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authenticated session has been revoked.",
+            detail="Authentication required.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
     if user_session.expires_at <= now:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authenticated session has expired.",
+            detail="Authentication required.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -120,7 +120,7 @@ def get_current_session(
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authenticated user no longer exists.",
+            detail="Authentication required.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -142,58 +142,9 @@ def get_current_user(
     ),
     db: Session = Depends(get_db),
 ) -> User:
-    """Return the authenticated user.
+    """Return the authenticated user from a persistent session."""
 
-    Session-bound tokens are validated against persistent sessions.
-    Legacy tokens without session claims remain supported temporarily
-    for backwards compatibility with existing callers.
-    """
-
-    token = _get_bearer_credentials(credentials)
-
-    try:
-        claims = decode_access_token_claims(token)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(exc),
-            headers={"WWW-Authenticate": "Bearer"},
-        ) from exc
-
-    has_session_claims = (
-        isinstance(claims.get("sid"), str)
-        and isinstance(claims.get("jti"), str)
-    )
-
-    if has_session_claims:
-        authenticated_session = get_current_session(
-            credentials=credentials,
-            db=db,
-        )
-        return authenticated_session.user
-
-    try:
-        user_id = decode_access_token(token)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(exc),
-            headers={"WWW-Authenticate": "Bearer"},
-        ) from exc
-
-    user = db.get(User, user_id)
-
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authenticated user no longer exists.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is inactive.",
-        )
-
-    return user
+    return get_current_session(
+        credentials=credentials,
+        db=db,
+    ).user

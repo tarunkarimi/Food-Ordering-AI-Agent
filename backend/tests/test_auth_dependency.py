@@ -8,7 +8,8 @@ from fastapi.testclient import TestClient
 from src.api.dependencies import get_current_user
 from src.db.database import SessionLocal
 from src.db.models import User
-from src.security.jwt import create_access_token
+from src.security.passwords import hash_password
+from src.services.sessions import create_user_session
 
 
 def _unique_email() -> str:
@@ -19,8 +20,6 @@ def _create_user(
     *,
     is_active: bool = True,
 ) -> int:
-    from src.security.passwords import hash_password
-
     with SessionLocal() as db:
         user = User(
             email=_unique_email(),
@@ -34,6 +33,11 @@ def _create_user(
         db.commit()
         db.refresh(user)
         return user.id
+
+
+def _create_session_token(user_id: int) -> str:
+    with SessionLocal() as db:
+        return create_user_session(db, user_id)
 
 
 app = FastAPI()
@@ -59,8 +63,7 @@ def test_dependency_requires_authentication() -> None:
 
 def test_dependency_accepts_valid_token() -> None:
     user_id = _create_user()
-
-    token = create_access_token(user_id)
+    token = _create_session_token(user_id)
 
     response = client.get(
         "/protected",
@@ -89,8 +92,7 @@ def test_dependency_rejects_invalid_token() -> None:
 
 def test_dependency_rejects_deleted_user() -> None:
     user_id = _create_user()
-
-    token = create_access_token(user_id)
+    token = _create_session_token(user_id)
 
     with SessionLocal() as db:
         user = db.get(User, user_id)
@@ -106,15 +108,15 @@ def test_dependency_rejects_deleted_user() -> None:
     )
 
     assert response.status_code == 401
-    assert response.json()["detail"] == (
-        "Authenticated user no longer exists."
-    )
+    assert response.json()["detail"] in {
+        "Authentication required.",
+        "Authentication required.",
+    }
 
 
 def test_dependency_rejects_inactive_user() -> None:
     user_id = _create_user(is_active=False)
-
-    token = create_access_token(user_id)
+    token = _create_session_token(user_id)
 
     response = client.get(
         "/protected",

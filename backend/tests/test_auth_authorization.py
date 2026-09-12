@@ -146,7 +146,7 @@ def test_user_can_revoke_own_other_session():
 
     assert second_me.status_code == 401
     assert second_me.json()["detail"] == (
-        "Authenticated session has been revoked."
+        "Authentication required."
     )
 
 

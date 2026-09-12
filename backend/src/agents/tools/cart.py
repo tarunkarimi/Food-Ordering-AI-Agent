@@ -12,6 +12,7 @@ from src.agents.state import (
     ItemVariation,
 )
 from langgraph.prebuilt import InjectedState
+from src.services.http_resilience import request_read_with_retry
 
 
 def _menu_url(subdomain: str) -> str:
@@ -21,7 +22,12 @@ def _menu_url(subdomain: str) -> str:
 def _fetch_menu_items(state: OrderState) -> tuple[list[dict], str | None]:
     """Fetch and minimally validate the authoritative tenant menu."""
     try:
-        response = requests.get(_menu_url(state["subdomain"]), timeout=10)
+        response = request_read_with_retry(
+            lambda: requests.get(
+                _menu_url(state["subdomain"]),
+                timeout=config.DOWNSTREAM_REQUEST_TIMEOUT_SECONDS,
+            )
+        )
         response.raise_for_status()
         menu = response.json()
 

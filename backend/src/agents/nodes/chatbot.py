@@ -1,4 +1,4 @@
-﻿"""Chatbot node."""
+"""Chatbot node."""
 
 import logging
 
@@ -8,6 +8,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from src.agents.state import OrderState, Cart
 from src.agents.prompts.system_prompt import SYSTEM_INSTRUCTION, WELCOME_MSG
 from src.configs.config import config
+from src.services.ai_concurrency import ai_concurrency_limiter
 
 from src.agents.tools.cart import (
     get_menu,
@@ -50,6 +51,7 @@ _model = ChatGoogleGenerativeAI(
     google_api_key=config.GOOGLE_API_KEY,
     temperature=0,
     max_retries=1,
+    timeout=config.AI_REQUEST_TIMEOUT_SECONDS,
 )
 
 
@@ -167,13 +169,14 @@ def chatbot(state: OrderState) -> OrderState:
                 duration_ms=timer.elapsed_ms,
             )
 
-        except Exception:
+        except Exception as exc:
             log_event(
                 logger,
                 "agent_invocation_failed",
                 level=logging.ERROR,
                 restaurant=state.get("restaurant_name"),
                 authenticated=state.get("user_id") is not None,
+                error_type=type(exc).__name__,
                 duration_ms=timer.elapsed_ms,
             )
             raise

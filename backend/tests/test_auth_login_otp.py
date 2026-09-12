@@ -46,7 +46,7 @@ def test_request_login_otp_for_verified_email(monkeypatch) -> None:
         "/api/auth/signup",
         json={
             "email": email,
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
@@ -92,7 +92,7 @@ def test_request_login_otp_for_verified_phone(monkeypatch) -> None:
         "/api/auth/signup",
         json={
             "phone": phone,
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
@@ -138,7 +138,7 @@ def test_verify_email_login_otp_succeeds(monkeypatch) -> None:
         "/api/auth/signup",
         json={
             "email": email,
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
@@ -190,7 +190,7 @@ def test_verify_phone_login_otp_succeeds(monkeypatch) -> None:
         "/api/auth/signup",
         json={
             "phone": phone,
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
@@ -242,7 +242,7 @@ def test_wrong_login_otp_increments_attempts(monkeypatch) -> None:
         "/api/auth/signup",
         json={
             "email": email,
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
@@ -295,7 +295,7 @@ def test_login_otp_blocks_after_max_attempts(monkeypatch) -> None:
         "/api/auth/signup",
         json={
             "email": email,
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
@@ -346,7 +346,7 @@ def test_login_otp_expiry_is_enforced(monkeypatch) -> None:
         "/api/auth/signup",
         json={
             "email": email,
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
@@ -409,7 +409,7 @@ def test_new_login_otp_invalidates_previous_code(
         "/api/auth/signup",
         json={
             "email": email,
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
@@ -432,6 +432,27 @@ def test_new_login_otp_invalidates_previous_code(
         "/api/auth/login/otp/request",
         json={"email": email},
     ).status_code == 202
+
+
+    with SessionLocal() as db:
+        code = db.scalar(
+            select(UserVerificationCode)
+            .where(
+                UserVerificationCode.user_id == user_id,
+                UserVerificationCode.channel == "email",
+                UserVerificationCode.purpose == "login",
+            )
+            .order_by(
+                UserVerificationCode.created_at.desc(),
+                UserVerificationCode.id.desc(),
+            )
+        )
+        assert code is not None
+        code.created_at = (
+            datetime.now(timezone.utc)
+            - timedelta(seconds=61)
+        )
+        db.commit()
 
     assert client.post(
         "/api/auth/login/otp/request",
@@ -475,7 +496,7 @@ def test_login_otp_rejects_unverified_email() -> None:
         "/api/auth/signup",
         json={
             "email": email,
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
@@ -486,9 +507,10 @@ def test_login_otp_rejects_unverified_email() -> None:
         json={"email": email},
     )
 
-    assert response.status_code == 403
-    assert response.json()["detail"] == (
-        "Email address is not verified."
+    assert response.status_code == 202
+    assert response.json()["message"] == (
+        "If the account is eligible, a login "
+        "verification code has been requested."
     )
 
 
@@ -498,9 +520,10 @@ def test_login_otp_rejects_unknown_email() -> None:
         json={"email": _unique_email()},
     )
 
-    assert response.status_code == 401
-    assert response.json()["detail"] == (
-        "Unable to start OTP login."
+    assert response.status_code == 202
+    assert response.json()["message"] == (
+        "If the account is eligible, a login "
+        "verification code has been requested."
     )
 
 
@@ -511,7 +534,7 @@ def test_login_otp_rejects_inactive_user() -> None:
         "/api/auth/signup",
         json={
             "email": email,
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
@@ -530,9 +553,10 @@ def test_login_otp_rejects_inactive_user() -> None:
         json={"email": email},
     )
 
-    assert response.status_code == 403
-    assert response.json()["detail"] == (
-        "User account is inactive."
+    assert response.status_code == 202
+    assert response.json()["message"] == (
+        "If the account is eligible, a login "
+        "verification code has been requested."
     )
 
 
@@ -546,6 +570,85 @@ def test_login_otp_rejects_email_and_phone_together() -> None:
     )
 
     assert response.status_code == 422
+
+
+
+def test_verify_login_otp_rejects_unknown_account_with_generic_error() -> None:
+    response = client.post(
+        "/api/auth/login/otp/verify",
+        json={
+            "email": _unique_email(),
+            "code": "123456",
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid OTP login request."
+
+
+def test_verify_login_otp_rejects_inactive_account_with_generic_error() -> None:
+    email = _unique_email()
+
+    signup = client.post(
+        "/api/auth/signup",
+        json={
+            "email": email,
+            "password": "StrongPassword123!",
+        },
+    )
+
+    assert signup.status_code == 201
+    user_id = signup.json()["id"]
+
+    with SessionLocal() as db:
+        user = db.get(User, user_id)
+        assert user is not None
+        user.email_verified = True
+        user.is_active = False
+        db.commit()
+
+    response = client.post(
+        "/api/auth/login/otp/verify",
+        json={
+            "email": email,
+            "code": "123456",
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid OTP login request."
+
+
+def test_verify_login_otp_rejects_unverified_identity_with_generic_error() -> None:
+    email = _unique_email()
+
+    signup = client.post(
+        "/api/auth/signup",
+        json={
+            "email": email,
+            "password": "StrongPassword123!",
+        },
+    )
+
+    assert signup.status_code == 201
+    user_id = signup.json()["id"]
+
+    with SessionLocal() as db:
+        user = db.get(User, user_id)
+        assert user is not None
+        user.email_verified = False
+        db.commit()
+
+    response = client.post(
+        "/api/auth/login/otp/verify",
+        json={
+            "email": email,
+            "code": "123456",
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid OTP login request."
 
 
 def test_login_otp_requires_identity() -> None:
@@ -575,7 +678,7 @@ def test_login_otp_normalizes_email_case(monkeypatch) -> None:
         "/api/auth/signup",
         json={
             "email": email,
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
@@ -623,7 +726,7 @@ def test_login_otp_rejects_reuse(monkeypatch) -> None:
         "/api/auth/signup",
         json={
             "email": email,
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 

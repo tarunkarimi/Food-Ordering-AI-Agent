@@ -1,49 +1,63 @@
-from __future__ import annotations
+from unittest.mock import MagicMock, patch
 
-from unittest.mock import patch
-
-from src.observability.health import (
-    check_database,
-    get_readiness,
-)
+import src.observability.health as health
 
 
-def test_database_check_returns_ok_when_database_is_available():
-    with patch("src.observability.health.SessionLocal") as session_factory:
-        db = session_factory.return_value
-
-        result = check_database()
-
-        assert result == {"status": "ok"}
-        db.execute.assert_called_once()
-        db.close.assert_called_once()
+def setup_function():
+    health.reset_readiness_cache()
 
 
-def test_database_check_returns_error_without_exposing_details():
-    with patch("src.observability.health.SessionLocal") as session_factory:
-        session_factory.side_effect = RuntimeError(
-            "database-password=SECRET"
-        )
-
-        result = check_database()
-
-        assert result["status"] == "error"
-        assert result["error_type"] == "RuntimeError"
-        assert "SECRET" not in str(result)
+def teardown_function():
+    health.reset_readiness_cache()
 
 
-def test_readiness_is_ready_when_database_is_ready():
+def test_database_check_returns_ok():
+    session = MagicMock()
+
+    with patch("src.observability.health.SessionLocal", return_value=session):
+        result = health.check_database()
+
+    assert result == {"status": "ok"}
+    session.execute.assert_called_once()
+    session.close.assert_called_once()
+
+
+def test_database_check_hides_raw_database_error():
+    session = MagicMock()
+    session.execute.side_effect = RuntimeError("secret database details")
+
+    with patch("src.observability.health.SessionLocal", return_value=session):
+        result = health.check_database()
+
+    assert result == {
+        "status": "error",
+        "error_type": "RuntimeError",
+    }
+    assert "secret database details" not in str(result)
+    session.close.assert_called_once()
+
+
+def test_readiness_returns_ready_when_database_is_available():
     with patch(
         "src.observability.health.check_database",
         return_value={"status": "ok"},
-    ):
-        result = get_readiness()
+    ) as check:
+        result = health.get_readiness()
+        second = health.get_readiness()
 
-        assert result["status"] == "ready"
-        assert result["checks"]["database"]["status"] == "ok"
+    assert result == {
+        "status": "ready",
+        "checks": {
+            "database": {
+                "status": "ok",
+            }
+        },
+    }
+    assert second == result
+    check.assert_called_once()
 
 
-def test_readiness_is_not_ready_when_database_fails():
+def test_readiness_returns_not_ready_when_database_fails():
     with patch(
         "src.observability.health.check_database",
         return_value={
@@ -51,26 +65,47 @@ def test_readiness_is_not_ready_when_database_fails():
             "error_type": "OperationalError",
         },
     ):
-        result = get_readiness()
+        result = health.get_readiness()
 
-        assert result["status"] == "not_ready"
-        assert (
-            result["checks"]["database"]["status"]
-            == "error"
-        )
-        assert (
-            result["checks"]["database"]["error_type"]
-            == "OperationalError"
-        )
+    assert result == {
+        "status": "not_ready",
+        "checks": {
+            "database": {
+                "status": "error",
+                "error_type": "OperationalError",
+            }
+        },
+    }
 
 
-def test_readiness_endpoint_does_not_require_external_ai_call():
-    with patch(
-        "src.observability.health.check_database",
-        return_value={"status": "ok"},
-    ) as database_check:
-        result = get_readiness()
+def test_readiness_cache_expires():
+    current_time = [0.0]
 
-        database_check.assert_called_once()
-        assert result["status"] == "ready"
+    def fake_monotonic():
+        return current_time[0]
 
+    with (
+        patch(
+            "src.observability.health.check_database",
+            side_effect=[
+                {"status": "ok"},
+                {"status": "error", "error_type": "OperationalError"},
+            ],
+        ) as check,
+        patch(
+            "src.observability.health.time.monotonic",
+            side_effect=fake_monotonic,
+        ),
+    ):
+        first = health.get_readiness()
+
+        current_time[0] = 2.0
+        cached = health.get_readiness()
+
+        current_time[0] = 6.0
+        expired = health.get_readiness()
+
+    assert first["status"] == "ready"
+    assert cached["status"] == "ready"
+    assert expired["status"] == "not_ready"
+    assert check.call_count == 2

@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 
 import uvicorn
 from fastapi import FastAPI
@@ -11,8 +11,9 @@ from src.api.routes.preferences import router as preferences_router
 from src.api.routes.reorder import router as reorder_router
 from src.api.routes.chats import router as chat_router
 from src.configs.config import config
-from src.observability.middleware import ObservabilityMiddleware
 from src.observability.health import get_readiness
+from src.observability.middleware import ObservabilityMiddleware
+from src.observability.security_headers import SecurityHeadersMiddleware
 
 
 logging.basicConfig(
@@ -41,11 +42,26 @@ app.add_middleware(
 )
 
 app.add_middleware(
+    SecurityHeadersMiddleware,
+)
+
+app.add_middleware(
     CORSMiddleware,
     allow_origins=frontend_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=[
+        "GET",
+        "POST",
+        "PATCH",
+        "DELETE",
+        "OPTIONS",
+    ],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "Accept",
+        "X-Request-ID",
+    ],
 )
 
 

@@ -27,12 +27,24 @@ def _create_email_user() -> dict:
         "/api/auth/signup",
         json={
             "email": _unique_email(),
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
     assert response.status_code == 201
-    return response.json()
+    data = response.json()
+
+    with SessionLocal() as db:
+        code = db.scalar(
+            select(UserVerificationCode)
+            .where(UserVerificationCode.user_id == data["id"])
+            .order_by(UserVerificationCode.created_at.desc())
+        )
+        assert code is not None
+        code.created_at = datetime.now(timezone.utc) - timedelta(seconds=61)
+        db.commit()
+
+    return data
 
 
 def _create_phone_user() -> dict:
@@ -40,12 +52,24 @@ def _create_phone_user() -> dict:
         "/api/auth/signup",
         json={
             "phone": _unique_phone(),
-            "password": "StrongPassword123",
+            "password": "StrongPassword123!",
         },
     )
 
     assert response.status_code == 201
-    return response.json()
+    data = response.json()
+
+    with SessionLocal() as db:
+        code = db.scalar(
+            select(UserVerificationCode)
+            .where(UserVerificationCode.user_id == data["id"])
+            .order_by(UserVerificationCode.created_at.desc())
+        )
+        assert code is not None
+        code.created_at = datetime.now(timezone.utc) - timedelta(seconds=61)
+        db.commit()
+
+    return data
 
 
 def test_request_email_verification_code_creates_hashed_code(
@@ -504,6 +528,21 @@ def test_requesting_new_otp_invalidates_previous_code(
     )
 
     assert first.status_code == 202
+
+    # The production endpoint enforces a 60-second resend cooldown.
+    # Age the first code so this test can specifically verify that a
+    # subsequent request invalidates the previous code.
+    with SessionLocal() as db:
+        first_code = db.scalar(
+            select(UserVerificationCode)
+            .where(UserVerificationCode.user_id == user["id"])
+            .order_by(UserVerificationCode.created_at.desc())
+        )
+        assert first_code is not None
+        first_code.created_at = (
+            datetime.now(timezone.utc) - timedelta(seconds=61)
+        )
+        db.commit()
 
     second = client.post(
         "/api/auth/verification/request",

@@ -17,10 +17,20 @@ from sqlalchemy.orm import Session
 from src.db.database import get_db
 from src.db.models import User, UserSession, UserVerificationCode
 from src.security.otp import generate_otp, hash_otp, verify_otp
-from src.security.passwords import hash_password, verify_password
+from src.security.passwords import DUMMY_PASSWORD_HASH, hash_password, verify_password
+from src.security.otp_policy import (
+    OTPRateLimitError,
+    enforce_otp_request_limits,
+)
+from src.security.password_policy import validate_password
 from src.security.jwt import create_access_token
 from src.api.dependencies import get_current_session, get_current_user
 from src.services.sessions import create_user_session, revoke_session
+from src.services.login_throttle import (
+    is_login_locked,
+    record_failed_login,
+    reset_login_failures,
+)
 from src.services.verification import deliver_verification_code
 
 
@@ -71,7 +81,7 @@ class SignupRequest(BaseModel):
 
     password: str = Field(
         ...,
-        min_length=8,
+        min_length=12,
         max_length=128,
     )
 
@@ -271,6 +281,14 @@ def signup(
 ) -> SignupResponse:
     """Create an unverified user account."""
 
+    try:
+        validate_password(request.password)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
     email = (
         normalize_email(str(request.email))
         if request.email
@@ -346,7 +364,7 @@ def signup(
     )
 
     logger.info(
-        "Created user account with id=%s and signup verification code",
+        "Created user account with id=%s and signup verification challenge",
         user.id,
     )
 
@@ -408,28 +426,28 @@ def login(
             detail="Invalid credentials.",
         )
 
+    if is_login_locked(db, user_id=user.id):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed login attempts. Please try again later.",
+        )
+
     if not verify_password(
         request.password,
         user.password_hash,
     ):
+        record_failed_login(db, user_id=user.id)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials.",
         )
 
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is inactive.",
-        )
+    reset_login_failures(db, user_id=user.id)
 
-    if not identity_verified:
+    if not user.is_active or not identity_verified:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                "Account identity is not verified. "
-                "Please verify your email or phone number first."
-            ),
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials.",
         )
 
     logger.info(
@@ -492,31 +510,48 @@ def request_login_otp(
         )
         channel = "phone"
 
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Unable to start OTP login.",
+    if (
+        user is None
+        or not user.is_active
+        or (
+            channel == "email"
+            and not user.email_verified
+        )
+        or (
+            channel == "phone"
+            and not user.phone_verified
+        )
+    ):
+        return LoginOTPResponse(
+            message=(
+                "If the account is eligible, a login "
+                "verification code has been requested."
+            ),
         )
 
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is inactive.",
-        )
-
-    if channel == "email" and not user.email_verified:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Email address is not verified.",
-        )
-
-    if channel == "phone" and not user.phone_verified:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Phone number is not verified.",
-        )
+    # Serialize OTP requests per user so concurrent requests cannot
+    # bypass the resend cooldown or hourly request limit.
+    db.scalar(
+        select(User)
+        .where(User.id == user.id)
+        .with_for_update()
+    )
 
     now = datetime.now(timezone.utc)
+
+    try:
+        enforce_otp_request_limits(
+            db,
+            user_id=user.id,
+            channel=channel,
+            purpose="login",
+            now=now,
+        )
+    except OTPRateLimitError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(exc),
+        ) from exc
 
     previous_codes = db.scalars(
         select(UserVerificationCode).where(
@@ -547,7 +582,7 @@ def request_login_otp(
     db.commit()
 
     logger.info(
-        "Created login OTP for user_id=%s via %s",
+        "Created login verification challenge for user_id=%s via %s",
         user.id,
         channel,
     )
@@ -604,24 +639,14 @@ def verify_login_otp(
             user is not None and user.phone_verified
         )
 
-    if user is None:
+    if (
+        user is None
+        or not user.is_active
+        or not identity_verified
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid OTP login request.",
-        )
-
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is inactive.",
-        )
-
-    if not identity_verified:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                "Account identity is not verified."
-            ),
         )
 
     verification_code = db.scalar(
@@ -636,6 +661,7 @@ def verify_login_otp(
             UserVerificationCode.created_at.desc(),
             UserVerificationCode.id.desc(),
         )
+        .with_for_update()
     )
 
     if verification_code is None:
@@ -754,7 +780,30 @@ def request_verification_code(
                 detail="Phone number is already verified.",
             )
 
+    # Serialize OTP requests per user so concurrent requests cannot
+    # bypass the resend cooldown or hourly request limit.
+    db.scalar(
+        select(User)
+        .where(User.id == user.id)
+        .with_for_update()
+    )
+
     now = datetime.now(timezone.utc)
+
+    try:
+        enforce_otp_request_limits(
+            db,
+            user_id=user.id,
+            channel=request.channel,
+            purpose=request.purpose,
+            now=now,
+        )
+    except OTPRateLimitError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(exc),
+        ) from exc
+
 
     previous_codes = db.scalars(
         select(UserVerificationCode).where(

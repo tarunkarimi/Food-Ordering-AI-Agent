@@ -1,129 +1,91 @@
+﻿"""FastAPI application bootstrap."""
+
 import logging
 
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.api.routes.auth import router as auth_router
-from src.api.routes.cart import router as cart_router
-from src.api.routes.orders import router as orders_router
-from src.api.routes.preferences import router as preferences_router
-from src.api.routes.reorder import router as reorder_router
-from src.api.routes.chats import router as chat_router
+from src.api.router import api_router
 from src.configs.config import config
 from src.observability.health import get_readiness
 from src.observability.middleware import ObservabilityMiddleware
 from src.observability.security_headers import SecurityHeadersMiddleware
 
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
-
 logger = logging.getLogger(__name__)
 
 
-app = FastAPI(
-    title="Food Ordering AI Agent",
-    version="1.0.0",
-)
+def _frontend_origins() -> list[str]:
+    """Return configured frontend origins with surrounding whitespace removed."""
+    return [
+        origin.strip()
+        for origin in config.FRONTEND_ORIGINS.split(",")
+        if origin.strip()
+    ]
 
 
-frontend_origins = [
-    origin.strip()
-    for origin in config.FRONTEND_ORIGINS.split(",")
-    if origin.strip()
-]
+def create_app() -> FastAPI:
+    """Create and configure the FastAPI application."""
+    app = FastAPI(
+        title="Food Ordering AI Agent",
+        version="1.0.0",
+    )
+
+    app.add_middleware(ObservabilityMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_frontend_origins(),
+        allow_credentials=True,
+        allow_methods=[
+            "GET",
+            "POST",
+            "PATCH",
+            "DELETE",
+            "OPTIONS",
+        ],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "Accept",
+            "X-Request-ID",
+        ],
+    )
+
+    app.include_router(api_router)
+
+    @app.get("/")
+    def read_root():
+        return {
+            "status": "ok",
+            "message": "Server is running.",
+        }
+
+    @app.get("/ready")
+    def readiness():
+        return get_readiness()
+
+    @app.get("/health")
+    def health_check():
+        return {
+            "status": "ok",
+            "service": "ai-backend",
+        }
+
+    return app
 
 
-app.add_middleware(
-    ObservabilityMiddleware,
-)
-
-app.add_middleware(
-    SecurityHeadersMiddleware,
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=frontend_origins,
-    allow_credentials=True,
-    allow_methods=[
-        "GET",
-        "POST",
-        "PATCH",
-        "DELETE",
-        "OPTIONS",
-    ],
-    allow_headers=[
-        "Authorization",
-        "Content-Type",
-        "Accept",
-        "X-Request-ID",
-    ],
-)
+app = create_app()
 
 
-app.include_router(
-    auth_router,
-    prefix="/api/auth",
-    tags=["authentication"],
-)
+def main() -> None:
+    """Run the application with the configured server settings."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
 
-app.include_router(
-    cart_router,
-    prefix="/api/cart",
-    tags=["cart"],
-)
-
-app.include_router(
-    orders_router,
-    prefix="/api/orders",
-    tags=["orders"],
-)
-
-app.include_router(
-    reorder_router,
-    prefix="/api/orders",
-    tags=["orders"],
-)
-
-app.include_router(
-    preferences_router,
-    prefix="/api/preferences",
-    tags=["preferences"],
-)
-
-app.include_router(
-    chat_router,
-    prefix="/api/chats",
-    tags=["workflows"],
-)
-
-
-@app.get("/")
-def read_root():
-    return {
-        "status": "ok",
-        "message": "Server is running.",
-    }
-
-
-@app.get("/ready")
-def readiness():
-    return get_readiness()
-
-
-@app.get("/health")
-def health_check():
-    return {
-        "status": "ok",
-        "service": "ai-backend",
-    }
-
-
-def main():
     logger.info(
         "Starting AI backend on port %s",
         config.PORT,

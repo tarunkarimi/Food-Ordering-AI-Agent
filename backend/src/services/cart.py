@@ -1,10 +1,18 @@
-﻿"""Persistent authenticated-cart service."""
+"""Persistent authenticated-cart service."""
 
 from decimal import Decimal
-from sqlalchemy import select
-from sqlalchemy.orm import Session, selectinload
 
-from src.db.models import Cart, CartItem
+from sqlalchemy.orm import Session
+
+from src.db.models import Cart
+from src.repositories.cart_repository import (
+    add_cart_item,
+    create_cart,
+    delete_all_cart_items,
+    delete_cart_item,
+    get_cart as repository_get_cart,
+    get_cart_item,
+)
 
 
 def get_or_create_cart(
@@ -14,21 +22,18 @@ def get_or_create_cart(
     restaurant_name: str,
     subdomain: str,
 ) -> Cart:
-    cart = db.scalar(
-        select(Cart)
-        .options(selectinload(Cart.items))
-        .where(Cart.user_id == user_id)
-    )
+    """Return the user's cart, creating or switching an empty cart as needed."""
+    cart = repository_get_cart(db, user_id=user_id)
 
     if cart is None:
-        cart = Cart(
+        return create_cart(
+            db,
             user_id=user_id,
             restaurant_name=restaurant_name,
             subdomain=subdomain,
         )
-        db.add(cart)
-        db.flush()
-    elif (
+
+    if (
         cart.restaurant_name != restaurant_name
         or cart.subdomain != subdomain
     ):
@@ -49,11 +54,8 @@ def get_cart(
     *,
     user_id: int,
 ) -> Cart | None:
-    return db.scalar(
-        select(Cart)
-        .options(selectinload(Cart.items))
-        .where(Cart.user_id == user_id)
-    )
+    """Return a user's persistent cart."""
+    return repository_get_cart(db, user_id=user_id)
 
 
 def add_item(
@@ -71,6 +73,7 @@ def add_item(
     variation_name: str | None,
     variation_price: float | None,
 ) -> Cart:
+    """Add an item to the user's persistent cart."""
     cart = get_or_create_cart(
         db,
         user_id=user_id,
@@ -78,17 +81,14 @@ def add_item(
         subdomain=subdomain,
     )
 
-    existing = next(
-        (
-            item
-            for item in cart.items
-            if item.item_key == item_key
-        ),
-        None,
+    existing = get_cart_item(
+        cart,
+        item_key=item_key,
     )
 
     if existing is None:
-        existing = CartItem(
+        add_cart_item(
+            db,
             cart=cart,
             item_key=item_key,
             item_id=item_id,
@@ -99,7 +99,6 @@ def add_item(
             variation_name=variation_name,
             variation_price=variation_price,
         )
-        db.add(existing)
     else:
         existing.quantity += quantity
         existing.title = title
@@ -123,18 +122,15 @@ def update_item(
     variation_name: str | None,
     variation_price: float | None,
 ) -> Cart:
+    """Update an existing persistent cart item."""
     cart = get_cart(db, user_id=user_id)
 
     if cart is None:
         raise LookupError("Cart not found.")
 
-    item = next(
-        (
-            item
-            for item in cart.items
-            if item.item_key == item_key
-        ),
-        None,
+    item = get_cart_item(
+        cart,
+        item_key=item_key,
     )
 
     if item is None:
@@ -157,24 +153,24 @@ def remove_item(
     user_id: int,
     item_key: str,
 ) -> Cart:
+    """Remove one item from the persistent cart."""
     cart = get_cart(db, user_id=user_id)
 
     if cart is None:
         raise LookupError("Cart not found.")
 
-    item = next(
-        (
-            item
-            for item in cart.items
-            if item.item_key == item_key
-        ),
-        None,
+    item = get_cart_item(
+        cart,
+        item_key=item_key,
     )
 
     if item is None:
         raise LookupError("Cart item not found.")
 
-    db.delete(item)
+    delete_cart_item(
+        db,
+        item=item,
+    )
     db.commit()
 
     return get_cart(db, user_id=user_id)
@@ -185,20 +181,23 @@ def clear_cart(
     *,
     user_id: int,
 ) -> Cart | None:
+    """Remove all items from a user's persistent cart."""
     cart = get_cart(db, user_id=user_id)
 
     if cart is None:
         return None
 
-    for item in list(cart.items):
-        db.delete(item)
-
+    delete_all_cart_items(
+        db,
+        cart=cart,
+    )
     db.commit()
 
     return get_cart(db, user_id=user_id)
 
 
 def cart_total(cart: Cart | None) -> Decimal:
+    """Calculate the total value of a persistent cart."""
     if cart is None:
         return Decimal("0.00")
 

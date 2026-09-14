@@ -1,17 +1,41 @@
-﻿import { test, expect } from "@playwright/test";
+import { test, expect } from "@playwright/test";
 
 const E2E_EMAIL = "e2e-playwright@example.com";
 const E2E_PASSWORD = "E2EPassword123!";
+const TOKEN_KEY = "food_agent_access_token";
+const USER_KEY = "food_agent_user";
 
 async function login(page) {
+  const response = await page.request.post("/api/auth/login", {
+    data: {
+      email: E2E_EMAIL,
+      password: E2E_PASSWORD,
+    },
+  });
+
+  expect(response.ok()).toBeTruthy();
+
+  const data = await response.json();
+
+  expect(data.access_token).toBeTruthy();
+  expect(data.user?.email).toBe(E2E_EMAIL);
+
   await page.goto("/");
 
-  await page.getByRole("textbox", { name: /email|phone/i }).fill(E2E_EMAIL);
-  await page.getByRole("textbox", { name: /password/i }).fill(E2E_PASSWORD);
+  await page.evaluate(
+    ({ tokenKey, userKey, accessToken, user }) => {
+      localStorage.setItem(tokenKey, accessToken);
+      localStorage.setItem(userKey, JSON.stringify(user));
+    },
+    {
+      tokenKey: TOKEN_KEY,
+      userKey: USER_KEY,
+      accessToken: data.access_token,
+      user: data.user,
+    },
+  );
 
-  await page
-    .getByRole("button", { name: "Sign In", exact: true })
-    .click();
+  await page.reload();
 
   await expect
     .poll(async () => {
@@ -26,13 +50,22 @@ async function login(page) {
 async function browserApi(page, path, options = {}) {
   return await page.evaluate(
     async ({ path, options }) => {
+      const token = localStorage.getItem("food_agent_access_token");
+
       const response = await fetch(path, {
         method: options.method || "GET",
         headers: {
           "Content-Type": "application/json",
+          ...(token
+            ? {
+                Authorization: `Bearer ${token}`,
+              }
+            : {}),
           ...(options.headers || {}),
         },
-        body: options.body ? JSON.stringify(options.body) : undefined,
+        body: options.body
+          ? JSON.stringify(options.body)
+          : undefined,
       });
 
       let data = null;

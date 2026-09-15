@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Bot,
   ShoppingCart,
@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import "./App.css";
 import OrderHistoryPanel from "./components/OrderHistoryPanel";
+import OrderingIntelligencePanel from "./components/OrderingIntelligencePanel";
 
 const MENU_API = import.meta.env.VITE_MENU_API_URL || "/menu-api";
 const AI_API = import.meta.env.VITE_AI_API_URL || "";
@@ -721,6 +722,7 @@ function App() {
 
   return (
     <>
+      <OrderingIntelligencePanel restaurantName={restaurant} />
       <OrderHistoryPanel
         onReorder={(orderId) =>
           sendMessage(null, `Reorder order ${orderId}`)

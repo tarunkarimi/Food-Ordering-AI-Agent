@@ -14,31 +14,30 @@ from src.services.order_history import list_order_history
 def _load_items(order: Any) -> list[dict[str, Any]]:
     raw = getattr(order, "items_json", None)
 
-    if isinstance(raw, list):
-        return [item for item in raw if isinstance(item, dict)]
-
     if isinstance(raw, str):
         try:
-            parsed = json.loads(raw)
+            raw = json.loads(raw)
         except (TypeError, ValueError, json.JSONDecodeError):
             return []
-        if isinstance(parsed, list):
-            return [item for item in parsed if isinstance(item, dict)]
 
-    return []
+    if not isinstance(raw, list):
+        return []
+
+    return [item for item in raw if isinstance(item, dict)]
 
 
 def _item_key(item: dict[str, Any]) -> str:
     item_id = item.get("item_id", item.get("id"))
     if item_id is not None:
         return f"id:{item_id}"
-    return f"title:{str(item.get('title', '')).strip().lower()}"
+    return f"title:{str(item.get('title') or item.get('name') or '').strip().lower()}"
 
 
 def _item_title(item: dict[str, Any]) -> str:
     return str(
         item.get("title")
         or item.get("name")
+        or item.get("item_title")
         or item.get("item_name")
         or ""
     ).strip()
@@ -115,7 +114,7 @@ def build_ordering_intelligence(
             -item["total_quantity"],
             item["title"].lower(),
         ),
-    )[:10]
+    )
 
     repeat_combinations = [
         {
@@ -130,7 +129,7 @@ def build_ordering_intelligence(
 
     return {
         "orders_analyzed": len(orders),
-        "usual_items": usual_items,
+        "usual_items": usual_items[:10],
         "favorite_restaurants": [
             {"restaurant_name": name, "order_count": count}
             for name, count in restaurants.most_common(5)
@@ -140,15 +139,9 @@ def build_ordering_intelligence(
             {
                 "order_id": str(getattr(latest_order, "order_id", "")),
                 "restaurant_name": getattr(
-                    latest_order,
-                    "restaurant_name",
-                    None,
+                    latest_order, "restaurant_name", None
                 ),
-                "created_at": getattr(
-                    latest_order,
-                    "created_at",
-                    None,
-                ),
+                "created_at": getattr(latest_order, "created_at", None),
             }
             if latest_order
             else None
@@ -207,4 +200,10 @@ def build_smart_reorder_suggestions(
             }
         )
 
-    return suggestions
+    return sorted(
+        suggestions,
+        key=lambda item: (
+            -item["score"],
+            item["title"].lower(),
+        ),
+    )

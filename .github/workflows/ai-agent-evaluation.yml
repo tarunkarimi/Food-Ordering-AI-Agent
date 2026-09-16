@@ -10,7 +10,30 @@ on:
 
 jobs:
   ai-agent-evaluation:
+    name: AI Agent Evaluation
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: food_ordering_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d food_ordering_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      PORT: "8000"
+      MENU_BACKEND_URL: "http://localhost:8001"
+      GOOGLE_API_KEY: "ci-test-key"
+      DATABASE_URL: "postgresql+psycopg://postgres:postgres@localhost:5432/food_ordering_ci"
+      JWT_SECRET_KEY: "ci-test-jwt-secret-key-minimum-32-characters"
 
     defaults:
       run:
@@ -20,24 +43,29 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.13"
+          version: "0.9.17"
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.13
 
       - name: Install backend dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+        run: uv sync --frozen --dev
+
+      - name: Apply database migrations
+        run: uv run alembic upgrade head
 
       - name: Compile backend
-        run: python -m compileall src -q
+        run: uv run python -m compileall src -q
 
       - name: Run AI evaluation framework
-        run: python -m pytest tests/test_evaluation_framework.py tests/test_evaluation_thresholds.py -q
+        run: uv run pytest tests/test_evaluation_framework.py tests/test_evaluation_thresholds.py -q
 
       - name: Run AI evaluation report
-        run: python -m src.evaluation
+        run: uv run python -m src.evaluation
 
       - name: Run backend regression
-        run: python -m pytest -q
+        run: uv run pytest -q

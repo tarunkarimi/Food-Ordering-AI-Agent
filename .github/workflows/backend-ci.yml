@@ -17,6 +17,28 @@ jobs:
     name: Backend Validation
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: food_ordering_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d food_ordering_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      PORT: "8000"
+      MENU_BACKEND_URL: "http://localhost:8001"
+      GOOGLE_API_KEY: "ci-test-key"
+      DATABASE_URL: "postgresql+psycopg://postgres:postgres@localhost:5432/food_ordering_ci"
+      JWT_SECRET_KEY: "ci-test-jwt-secret-key-minimum-32-characters"
+
     defaults:
       run:
         working-directory: backend
@@ -36,6 +58,9 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --frozen --dev
+
+      - name: Apply database migrations
+        run: uv run alembic upgrade head
 
       - name: Compile backend
         run: uv run python -m compileall src -q

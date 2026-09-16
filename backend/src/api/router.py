@@ -1,4 +1,4 @@
-﻿"""Application router registration."""
+"""Application router registration."""
 
 from fastapi import APIRouter
 
@@ -11,6 +11,9 @@ from src.api.routes.ordering_intelligence import (
 )
 from src.api.routes.preferences import router as preferences_router
 from src.api.routes.reorder import router as reorder_router
+from src.api.routes.persistent_ordering_intelligence import (
+    router as persistent_ordering_intelligence_router,
+)
 
 api_router = APIRouter()
 
@@ -42,6 +45,12 @@ api_router.include_router(
     ordering_intelligence_router,
     prefix="/api/ordering-intelligence",
     tags=["ordering-intelligence"],
+)
+
+api_router.include_router(
+    persistent_ordering_intelligence_router,
+    prefix="/api/persistent-ordering-intelligence",
+    tags=["persistent-ordering-intelligence"],
 )
 
 api_router.include_router(

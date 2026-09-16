@@ -1,4 +1,4 @@
-"""Advanced recommendation constraints and ranking."""
+﻿"""Advanced recommendation constraints and ranking."""
 
 from typing import Any
 
@@ -98,6 +98,135 @@ def _matches_meal(
     return meal in text
 
 
+def _persistent_item_signal(
+    item: dict[str, Any],
+    persistent_context: dict[str, Any] | None,
+    current_restaurant: str | None,
+) -> tuple[int, list[str]]:
+    """Score lifetime ordering affinity from persistent intelligence."""
+
+    if not persistent_context:
+        return 0, []
+
+    title = _normalize(item.get("title"))
+    item_id = _normalize(item.get("id"))
+
+    favorite_items = persistent_context.get("favorite_items", [])
+
+    if not isinstance(favorite_items, list):
+        favorite_items = []
+
+    score = 0
+    reasons: list[str] = []
+
+    for favorite in favorite_items:
+        if not isinstance(favorite, dict):
+            continue
+
+        favorite_title = _normalize(
+            favorite.get("item_title")
+            or favorite.get("title")
+        )
+        favorite_key = _normalize(
+            favorite.get("item_key")
+            or favorite.get("item_id")
+        )
+
+        matches = (
+            bool(title and favorite_title and title == favorite_title)
+            or bool(item_id and favorite_key and item_id == favorite_key)
+        )
+
+        if not matches:
+            continue
+
+        try:
+            order_count = max(
+                0,
+                int(favorite.get("order_count", 0)),
+            )
+        except (TypeError, ValueError):
+            order_count = 0
+
+        try:
+            total_quantity = max(
+                0,
+                int(favorite.get("total_quantity", 0)),
+            )
+        except (TypeError, ValueError):
+            total_quantity = 0
+
+        favorite_restaurant = _normalize(
+            favorite.get("restaurant_name")
+        )
+        restaurant = _normalize(current_restaurant)
+
+        # Lifetime repeat ordering is a strong signal.
+        score += min(order_count * 2, 10)
+
+        # Quantity provides an additional, smaller signal.
+        score += min(total_quantity, 5)
+
+        if restaurant and favorite_restaurant == restaurant:
+            score += 5
+            reasons.append("one of your frequently ordered items here")
+        else:
+            reasons.append("one of your frequently ordered items")
+
+        return score, reasons
+
+    return 0, []
+
+
+def _persistent_restaurant_signal(
+    persistent_context: dict[str, Any] | None,
+    current_restaurant: str | None,
+) -> tuple[int, list[str]]:
+    """Score lifetime affinity for the current restaurant."""
+
+    if not persistent_context or not current_restaurant:
+        return 0, []
+
+    restaurant_name = _normalize(current_restaurant)
+
+    favorite_restaurants = persistent_context.get(
+        "favorite_restaurants",
+        [],
+    )
+
+    if not isinstance(favorite_restaurants, list):
+        return 0, []
+
+    for restaurant in favorite_restaurants:
+        if not isinstance(restaurant, dict):
+            continue
+
+        name = _normalize(
+            restaurant.get("restaurant_name")
+        )
+
+        if name != restaurant_name:
+            continue
+
+        try:
+            order_count = max(
+                0,
+                int(restaurant.get("order_count", 0)),
+            )
+        except (TypeError, ValueError):
+            order_count = 0
+
+        if order_count <= 0:
+            return 0, []
+
+        return (
+            min(order_count, 5),
+            ["you frequently order from this restaurant"],
+        )
+
+    return 0, []
+
+
 def _score(
     item: dict[str, Any],
     *,
@@ -105,6 +234,8 @@ def _score(
     spice_level: str | None,
     meal_preference: str | None,
     history_counts: dict[str, int],
+    persistent_context: dict[str, Any] | None = None,
+    current_restaurant: str | None = None,
 ) -> tuple[int, list[str]]:
     text = _text(item)
     title = _normalize(item.get("title"))
@@ -136,6 +267,27 @@ def _score(
         score += min(history_count * 3, 9)
         reasons.append("similar to what you ordered before")
 
+    persistent_item_score, persistent_item_reasons = (
+        _persistent_item_signal(
+            item,
+            persistent_context,
+            current_restaurant,
+        )
+    )
+
+    score += persistent_item_score
+    reasons.extend(persistent_item_reasons)
+
+    restaurant_score, restaurant_reasons = (
+        _persistent_restaurant_signal(
+            persistent_context,
+            current_restaurant,
+        )
+    )
+
+    score += restaurant_score
+    reasons.extend(restaurant_reasons)
+
     return score, reasons
 
 
@@ -147,10 +299,16 @@ def rank_recommendations(
     dietary_preference: str | None = None,
     meal_preference: str | None = None,
     history_counts: dict[str, int] | None = None,
+    persistent_context: dict[str, Any] | None = None,
+    current_restaurant: str | None = None,
     max_price: float | None = None,
     limit: int = 5,
 ) -> list[dict[str, Any]]:
-    """Rank only currently purchasable menu items."""
+    """Rank only currently purchasable menu items.
+
+    Persistent ordering intelligence can improve ranking, but current menu
+    availability, price, and dietary constraints remain authoritative.
+    """
 
     history_counts = history_counts or {}
 
@@ -188,6 +346,8 @@ def rank_recommendations(
             spice_level=spice_level,
             meal_preference=meal_preference,
             history_counts=history_counts,
+            persistent_context=persistent_context,
+            current_restaurant=current_restaurant,
         )
 
         candidates.append(

@@ -16,3 +16,12 @@ __all__ = [
     "UserVerificationCode",
 ]
 from src.db.models.login_attempt import LoginAttempt
+
+from src.db.models.ordering_intelligence import (
+    UserOrderingProfile,
+    UserOrderingItemStat,
+    UserOrderingRestaurantStat,
+)
+from src.db.models.ordering_processed_order import (
+    UserOrderingProcessedOrder,
+)

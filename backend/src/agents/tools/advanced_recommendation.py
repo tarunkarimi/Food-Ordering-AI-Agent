@@ -13,6 +13,9 @@ from src.db.database import SessionLocal
 from src.services.order_history import list_order_history
 from src.services.recommendation_ranking import rank_recommendations
 from src.services.user_preferences import get_user_preferences
+from src.services.persistent_ordering_intelligence import (
+    build_persistent_ai_ordering_context,
+)
 
 
 def _extract_budget(messages: list[Any]) -> float | None:
@@ -42,14 +45,56 @@ def _extract_budget(messages: list[Any]) -> float | None:
     return None
 
 
+def _build_history_counts(
+    orders: list[Any],
+) -> dict[str, int]:
+    """Build recent order frequency counts from persisted order snapshots."""
+
+    history_counts: dict[str, int] = {}
+
+    for order in orders:
+        try:
+            items = json.loads(order.items_json)
+        except (
+            TypeError,
+            ValueError,
+            json.JSONDecodeError,
+        ):
+            continue
+
+        if not isinstance(items, list):
+            continue
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+
+            title = str(
+                item.get("title")
+                or item.get("item_title")
+                or item.get("name")
+                or ""
+            ).strip().lower()
+
+            if title:
+                history_counts[title] = (
+                    history_counts.get(title, 0) + 1
+                )
+
+    return history_counts
+
+
 @tool
 def advanced_recommend_food(
     state: Annotated[OrderState, InjectedState],
 ) -> dict[str, Any]:
     """Solve a multi-constraint personalized food recommendation.
 
-    Combines authenticated saved preferences, previous order behavior,
-    explicit budget constraints, and current menu availability/pricing.
+    Combines saved preferences, recent order behavior, persistent lifetime
+    ordering intelligence, explicit budget constraints, and current menu
+    availability/pricing.
+
+    Current menu data is authoritative.
 
     Never modifies the cart or places an order.
     """
@@ -58,7 +103,9 @@ def advanced_recommend_food(
 
     if user_id is None:
         return {
-            "message": "Please sign in so I can personalize the recommendation."
+            "message": (
+                "Please sign in so I can personalize the recommendation."
+            )
         }
 
     menu_items, error = _fetch_menu_items(state)
@@ -66,7 +113,9 @@ def advanced_recommend_food(
     if error:
         return {"message": error}
 
-    max_price = _extract_budget(state.get("messages", []))
+    max_price = _extract_budget(
+        state.get("messages", [])
+    )
 
     try:
         with SessionLocal() as db:
@@ -82,36 +131,17 @@ def advanced_recommend_food(
                 offset=0,
             )
 
-            history_counts: dict[str, int] = {}
+            history_counts = _build_history_counts(orders)
 
-            for order in orders:
-                try:
-                    items = json.loads(order.items_json)
-                except (
-                    TypeError,
-                    ValueError,
-                    json.JSONDecodeError,
-                ):
-                    continue
-
-                if not isinstance(items, list):
-                    continue
-
-                for item in items:
-                    if not isinstance(item, dict):
-                        continue
-
-                    title = str(
-                        item.get("title")
-                        or item.get("item_title")
-                        or item.get("name")
-                        or ""
-                    ).strip().lower()
-
-                    if title:
-                        history_counts[title] = (
-                            history_counts.get(title, 0) + 1
-                        )
+            persistent_context = (
+                build_persistent_ai_ordering_context(
+                    db,
+                    user_id=user_id,
+                    restaurant_name=state.get(
+                        "restaurant_name"
+                    ),
+                )
+            )
 
             recommendations = rank_recommendations(
                 menu_items,
@@ -136,13 +166,19 @@ def advanced_recommend_food(
                     else None
                 ),
                 history_counts=history_counts,
+                persistent_context=persistent_context,
+                current_restaurant=state.get(
+                    "restaurant_name"
+                ),
                 max_price=max_price,
                 limit=5,
             )
 
     except Exception:
         return {
-            "message": "I couldn't build an advanced recommendation right now."
+            "message": (
+                "I couldn't build an advanced recommendation right now."
+            )
         }
 
     if not recommendations:
@@ -168,4 +204,7 @@ def advanced_recommend_food(
         "budget_applied": max_price,
         "preferences_used": bool(preferences),
         "orders_analyzed": len(orders),
+        "persistent_intelligence_used": bool(
+            persistent_context
+        ),
     }

@@ -1,4 +1,4 @@
-﻿"""Service boundary for LangGraph chat-agent execution."""
+"""Service boundary for LangGraph chat-agent execution."""
 
 import json
 import logging
@@ -6,6 +6,8 @@ from collections.abc import Iterator
 from typing import Any
 
 from src.agents.graph import chatbot_agent_builder
+from src.db.database import SessionLocal
+from src.services.ai_memory import capture_user_message_memories
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +54,21 @@ class ChatAgentService:
             "subdomain": subdomain,
             "user_id": user_id,
         }
+
+        try:
+            with SessionLocal() as db:
+                capture_user_message_memories(
+                    db,
+                    user_id=int(user_id),
+                    user_message=user_message,
+                )
+                db.commit()
+        except Exception:
+            logger.exception(
+                "Unable to capture conversational memory for "
+                "authenticated user %s.",
+                user_id,
+            )
 
         try:
             events = active_agent.stream(

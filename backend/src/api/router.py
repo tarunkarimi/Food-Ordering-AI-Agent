@@ -1,7 +1,8 @@
-"""Application router registration."""
+﻿"""Application router registration."""
 
 from fastapi import APIRouter
 
+from src.api.routes.ai_memory import router as ai_memory_router
 from src.api.routes.auth import router as auth_router
 from src.api.routes.cart import router as cart_router
 from src.api.routes.chats import router as chat_router
@@ -51,6 +52,12 @@ api_router.include_router(
     persistent_ordering_intelligence_router,
     prefix="/api/persistent-ordering-intelligence",
     tags=["persistent-ordering-intelligence"],
+)
+
+api_router.include_router(
+    ai_memory_router,
+    prefix="/api/ai-memory",
+    tags=["ai-memory"],
 )
 
 api_router.include_router(

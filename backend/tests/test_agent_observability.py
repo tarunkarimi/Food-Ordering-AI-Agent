@@ -1,4 +1,4 @@
-import json
+﻿import json
 import logging
 
 from src.agents.nodes import chatbot as chatbot_module
@@ -30,6 +30,18 @@ def test_chatbot_logs_agent_invocation_metadata(
         chatbot_module,
         "_persist_cart",
         lambda state, cart: None,
+    )
+
+    monkeypatch.setattr(
+        chatbot_module,
+        "_load_persistent_ordering_context",
+        lambda state: {},
+    )
+
+    monkeypatch.setattr(
+        chatbot_module,
+        "build_ai_memory_context",
+        lambda db, user_id: {},
     )
 
     set_request_id("agent-test-001")

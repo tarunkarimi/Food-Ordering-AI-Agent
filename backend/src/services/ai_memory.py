@@ -452,6 +452,3 @@ def clear_user_memories(
 
     return result.rowcount or 0
 
-
-
-

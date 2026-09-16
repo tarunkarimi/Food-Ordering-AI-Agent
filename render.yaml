@@ -1,4 +1,4 @@
-﻿services:
+services:
   - type: web
     runtime: python
     name: food-ordering-ai-backend
@@ -10,6 +10,10 @@
     healthCheckPath: /health
     envVars:
       - key: GOOGLE_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET_KEY
         sync: false
       - key: MENU_BACKEND_URL
         fromService:

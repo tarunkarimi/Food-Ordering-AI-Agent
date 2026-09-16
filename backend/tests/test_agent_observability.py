@@ -1,4 +1,4 @@
-﻿import json
+import json
 import logging
 
 from src.agents.nodes import chatbot as chatbot_module
@@ -44,7 +44,7 @@ def test_chatbot_logs_agent_invocation_metadata(
         "cart": Cart(items=[]),
         "restaurant_name": "Test Restaurant",
         "subdomain": "test",
-        "user_id": 42,
+        "user_id": 5570,
         "finished": False,
     }
 
@@ -110,7 +110,7 @@ def test_tool_node_logs_tool_metadata(
                 ],
             ),
         ],
-        "user_id": 42,
+        "user_id": 5570,
         "cart": Cart(items=[]),
     }
 
@@ -175,7 +175,7 @@ def test_tool_logging_does_not_include_tool_arguments(
                 ],
             ),
         ],
-        "user_id": 42,
+        "user_id": 5570,
         "cart": Cart(items=[]),
     }
 

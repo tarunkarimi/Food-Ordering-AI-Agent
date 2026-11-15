@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -611,6 +612,7 @@ async def chat_order(
         session_id,
         user_id=auth.user.id,
     )
+    message_timestamp = datetime.now(timezone.utc)
 
     def generate_sse():
         yield from chat_agent_service.stream_response(
@@ -619,6 +621,7 @@ async def chat_order(
             subdomain=subdomain,
             user_id=auth.user.id,
             graph_config=graph_config,
+            message_timestamp=message_timestamp,
             agent=chatbot_agent,
         )
 

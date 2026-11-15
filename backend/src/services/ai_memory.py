@@ -1,19 +1,22 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from src.db.models.user import User
 from src.db.models.ai_memory import UserAIMemory
 
 logger = logging.getLogger(__name__)
 
 _MAX_MEMORIES = 50
 _MAX_CONTEXT_MEMORIES = 20
+_MAX_MESSAGE_LENGTH = 4000
 
 
 # ---------------------------------------------------------------------------
@@ -29,6 +32,14 @@ _NEGATIVE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Generic explicit positive preference.
+_POSITIVE_PATTERN = re.compile(
+    r"\b(?:i\s+)?(?:(?:really|really\s+really)\s+)?"
+    r"(?:like|love|prefer|enjoy)\s+"
+    r"(?P<value>[a-zA-Z][a-zA-Z0-9 '&-]{1,80}?)"
+    r"(?=\s+(?:and|but)\s+|[.!?,;]|$)",
+    re.IGNORECASE,
+)
 # Specific positive cuisine preference.
 _CUISINE_PATTERN = re.compile(
     r"\b(?:(?:i\s+)?(?:(?:really|really\s+really)\s+)?(?:like|love|prefer|enjoy))\s+"
@@ -62,6 +73,58 @@ def _normalize_value(value: str) -> str:
     return value.strip(" .,;!?")
 
 
+def _normalize_timestamp(value: datetime | None) -> datetime:
+    if not isinstance(value, datetime):
+        return datetime.now(timezone.utc)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _memory_field(memory, name: str):
+    if isinstance(memory, dict):
+        return memory.get(name)
+    return getattr(memory, name, None)
+
+
+def _spice_food_value(memory) -> str | None:
+    memory_type = _memory_field(memory, "memory_type")
+    value = _normalize_value(str(_memory_field(memory, "memory_value") or ""))
+    if memory_type == "spice_level":
+        return value
+    if memory_type == "preference" and value.endswith(" food"):
+        return value[:-5].strip()
+    return None
+
+
+def _memories_conflict(left, right) -> bool:
+    left_type = _memory_field(left, "memory_type")
+    right_type = _memory_field(right, "memory_type")
+    left_key = _memory_field(left, "memory_key")
+    right_key = _memory_field(right, "memory_key")
+    left_value = _normalize_value(str(_memory_field(left, "memory_value") or ""))
+    right_value = _normalize_value(str(_memory_field(right, "memory_value") or ""))
+    left_polarity = _memory_field(left, "polarity")
+    right_polarity = _memory_field(right, "polarity")
+
+    if left_type == right_type and left_key == right_key:
+        if left_value == right_value and left_polarity != right_polarity:
+            return True
+        if (
+            left_type in {"spice_level", "dietary"}
+            and left_value != right_value
+        ):
+            return True
+
+    left_spice = _spice_food_value(left)
+    right_spice = _spice_food_value(right)
+    return bool(
+        left_polarity != right_polarity
+        and left_spice
+        and left_spice == right_spice
+    )
+
+
 def _overlaps(
     start: int,
     end: int,
@@ -92,7 +155,11 @@ def _build_memory(
 
 def extract_memories(user_message: str) -> list[dict]:
     """Extract conservative explicit food preferences from one message."""
-    if not user_message or not user_message.strip():
+    if (
+        not isinstance(user_message, str)
+        or not user_message.strip()
+        or len(user_message) > _MAX_MESSAGE_LENGTH
+    ):
         return []
 
     memories: list[dict] = []
@@ -223,7 +290,7 @@ def extract_memories(user_message: str) -> list[dict]:
 def _find_memory(
     db: Session,
     *,
-    user_id: str,
+    user_id: int,
     memory: dict,
 ) -> UserAIMemory | None:
     return db.execute(
@@ -239,28 +306,94 @@ def _find_memory(
 
 def record_memories(
     db: Session,
-    user_id: str,
+    user_id: int,
     memories: list[dict],
+    *,
+    occurred_at: datetime | None = None,
 ) -> list[UserAIMemory]:
-    """Persist explicit memories with concurrency-safe PostgreSQL upserts."""
+    """Persist explicit memories, serializing updates for each user."""
     if not user_id or not memories:
         return []
 
-    now = datetime.now(timezone.utc)
+    # A per-user row lock makes opposite-preference resolution deterministic
+    # when two chat requests for the same user arrive concurrently.
+    locked_user_id = db.scalar(
+        select(User.id).where(User.id == user_id).with_for_update()
+    )
+    if locked_user_id is None:
+        return []
 
-    for memory in memories:
+    event_time = _normalize_timestamp(occurred_at)
+
+    for memory_index, memory in enumerate(memories):
+        if not isinstance(memory, dict):
+            continue
+        memory_type = str(memory.get("memory_type", ""))[:32]
+        memory_key = str(memory.get("memory_key", ""))[:128]
+        memory_value = _normalize_value(str(memory.get("memory_value", "")))[:255]
+        polarity = str(memory.get("polarity", ""))
+        if (
+            not memory_type
+            or not memory_key
+            or not memory_value
+            or polarity not in {"like", "dislike"}
+        ):
+            continue
+        try:
+            confidence = float(memory.get("confidence", 0.90))
+        except (TypeError, ValueError):
+            confidence = 0.90
+        if not math.isfinite(confidence):
+            confidence = 0.90
+        confidence = min(max(confidence, 0.0), 1.0)
+        # Keep the original message ordering if it expresses a conflict in
+        # multiple clauses at the same API receipt timestamp.
+        now = event_time + timedelta(microseconds=memory_index)
+
         values = {
             "user_id": user_id,
-            "memory_type": memory["memory_type"],
-            "memory_key": memory["memory_key"],
-            "memory_value": memory["memory_value"],
-            "polarity": memory["polarity"],
-            "confidence": memory.get("confidence", 0.90),
+            "memory_type": memory_type,
+            "memory_key": memory_key,
+            "memory_value": memory_value,
+            "polarity": polarity,
+            "confidence": confidence,
             "mention_count": 1,
             "is_active": True,
             "first_seen_at": now,
             "last_seen_at": now,
         }
+
+        # Single-valued settings and exact/opposite preference pairs are
+        # resolved against active rows while the per-user lock is held.
+        active_memories = db.scalars(
+            select(UserAIMemory).where(
+                UserAIMemory.user_id == user_id,
+                UserAIMemory.is_active.is_(True),
+            )
+        ).all()
+        conflicting_ids = [
+            existing.id
+            for existing in active_memories
+            if _memories_conflict(existing, values)
+        ]
+        # The user-row lock serializes writes; the source message timestamp
+        # decides which preference wins if delayed graph work finishes later.
+        if any(
+            _normalize_timestamp(existing.last_seen_at) >= now
+            for existing in active_memories
+            if existing.id in conflicting_ids
+        ):
+            continue
+        if conflicting_ids:
+            db.execute(
+                update(UserAIMemory)
+                .where(
+                    UserAIMemory.user_id == user_id,
+                    UserAIMemory.id.in_(conflicting_ids),
+                    UserAIMemory.is_active.is_(True),
+                )
+                .values(is_active=False)
+            )
 
         stmt = pg_insert(UserAIMemory).values(**values)
 
@@ -273,13 +406,23 @@ def record_memories(
                 UserAIMemory.polarity,
             ],
             set_={
-                "mention_count": UserAIMemory.mention_count + 1,
+                "mention_count": case(
+                    (
+                        stmt.excluded.last_seen_at
+                        > UserAIMemory.last_seen_at,
+                        UserAIMemory.mention_count + 1,
+                    ),
+                    else_=UserAIMemory.mention_count,
+                ),
                 "confidence": func.greatest(
                     UserAIMemory.confidence,
                     stmt.excluded.confidence,
                 ),
                 "is_active": True,
-                "last_seen_at": now,
+                "last_seen_at": func.greatest(
+                    UserAIMemory.last_seen_at,
+                    stmt.excluded.last_seen_at,
+                ),
             },
         )
 
@@ -332,8 +475,9 @@ def record_memories(
 def capture_user_message_memories(
     db: Session,
     *,
-    user_id: str,
+    user_id: int,
     user_message: str,
+    occurred_at: datetime | None = None,
 ) -> list[UserAIMemory]:
     memories = extract_memories(user_message)
 
@@ -344,6 +488,7 @@ def capture_user_message_memories(
         db,
         user_id=user_id,
         memories=memories,
+        occurred_at=occurred_at,
     )
 
 
@@ -354,12 +499,12 @@ def capture_user_message_memories(
 def list_user_memories(
     db: Session,
     *,
-    user_id: str,
+    user_id: int,
     limit: int = _MAX_MEMORIES,
 ) -> list[UserAIMemory]:
     safe_limit = max(1, min(limit, _MAX_MEMORIES))
 
-    return db.execute(
+    memories = db.execute(
         select(UserAIMemory)
         .where(
             UserAIMemory.user_id == user_id,
@@ -372,10 +517,17 @@ def list_user_memories(
         .limit(safe_limit)
     ).scalars().all()
 
+    resolved = []
+    for memory in memories:
+        if any(_memories_conflict(existing, memory) for existing in resolved):
+            continue
+        resolved.append(memory)
+    return resolved
+
 
 def build_ai_memory_context(
     db: Session,
-    user_id: str | None,
+    user_id: int | None,
 ) -> dict:
     """Build a bounded, model-safe representation of explicit user memory."""
     base_context = {
@@ -386,26 +538,21 @@ def build_ai_memory_context(
     if not user_id:
         return base_context
 
-    memories = list(
-        db.scalars(
-            select(UserAIMemory)
-            .where(
-                UserAIMemory.user_id == user_id,
-                UserAIMemory.is_active.is_(True),
-            )
-            .order_by(
-                UserAIMemory.last_seen_at.desc(),
-                UserAIMemory.id.desc(),
-            )
-            .limit(_MAX_CONTEXT_MEMORIES)
-        )
-    )
+    memories = list_user_memories(
+        db,
+        user_id=user_id,
+        limit=_MAX_MEMORIES,
+    )[:_MAX_CONTEXT_MEMORIES]
 
     base_context["explicit_preferences"] = [
         {
-            "memory_type": memory.memory_type,
-            "memory_key": memory.memory_key,
-            "memory_value": memory.memory_value,
+            "memory_type": str(memory.memory_type)[:32],
+            "memory_key": str(memory.memory_key)[:128],
+            "memory_value": re.sub(
+                r"[\x00-\x1f\x7f]",
+                " ",
+                str(memory.memory_value),
+            )[:255],
             "polarity": memory.polarity,
             "confidence": float(memory.confidence),
             "mention_count": memory.mention_count,
@@ -442,7 +589,7 @@ def delete_user_memory(
 def clear_user_memories(
     db: Session,
     *,
-    user_id: str,
+    user_id: int,
 ) -> int:
     result = db.execute(
         delete(UserAIMemory).where(
@@ -451,4 +598,3 @@ def clear_user_memories(
     )
 
     return result.rowcount or 0
-

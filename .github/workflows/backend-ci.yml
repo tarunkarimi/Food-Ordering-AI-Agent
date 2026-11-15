@@ -70,7 +70,13 @@ jobs:
         run: uv run python -m compileall src -q
 
       - name: Run AI memory tests
-        run: uv run pytest tests/test_ai_memory.py -q
+        run: uv run pytest tests/test_ai_memory.py tests/test_ai_memory_unit.py -q
+
+      - name: Run AI memory persistence regressions
+        run: uv run pytest tests/test_ai_memory_integration.py tests/test_ai_memory_persistence_regressions.py -q
+
+      - name: Run personalized recommendation tests
+        run: uv run pytest tests/test_recommendations.py tests/test_recommendation_ranking.py tests/test_advanced_recommendation.py -q
 
       - name: Run observability tests
         run: uv run pytest tests/test_agent_observability.py -q

@@ -11,6 +11,7 @@ from src.agents.state import OrderState
 from src.agents.tools.cart import _fetch_menu_items
 from src.db.database import SessionLocal
 from src.services.order_history import list_order_history
+from src.services.ai_memory import list_user_memories
 from src.services.recommendation_ranking import rank_recommendations
 from src.services.user_preferences import get_user_preferences
 from src.services.persistent_ordering_intelligence import (
@@ -123,6 +124,10 @@ def advanced_recommend_food(
                 db,
                 user_id=user_id,
             )
+            ai_memories = list_user_memories(
+                db,
+                user_id=user_id,
+            )
 
             orders = list_order_history(
                 db,
@@ -172,6 +177,7 @@ def advanced_recommend_food(
                 ),
                 max_price=max_price,
                 limit=5,
+                ai_memories=ai_memories,
             )
 
     except Exception:
@@ -202,7 +208,7 @@ def advanced_recommend_food(
     return {
         "recommendations": recommendations,
         "budget_applied": max_price,
-        "preferences_used": bool(preferences),
+        "preferences_used": bool(preferences or ai_memories),
         "orders_analyzed": len(orders),
         "persistent_intelligence_used": bool(
             persistent_context

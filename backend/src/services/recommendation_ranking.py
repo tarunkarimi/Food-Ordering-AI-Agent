@@ -1,5 +1,6 @@
 ﻿"""Advanced recommendation constraints and ranking."""
 
+import re
 from typing import Any
 
 
@@ -7,6 +8,69 @@ def _normalize(value: object) -> str:
     if value is None:
         return ""
     return str(value).strip().lower()
+
+
+def memory_preference_signal(
+    item: dict[str, Any],
+    memories: list[Any] | None,
+) -> tuple[bool, int, list[str]]:
+    """Return whether remembered preferences exclude or favor a menu item.
+
+    Conversational memory is matched as a whole phrase in current menu text.
+    This keeps generic dislikes from accidentally matching partial words.
+    """
+    if not memories:
+        return False, 0, []
+
+    text = _text(item)
+    ingredients = item.get("ingredients")
+    ingredient_values = _ingredient_values(ingredients)
+    complete_ingredients = (
+        item.get("ingredients_complete") is True
+        and bool(ingredient_values)
+    )
+    positive_matches = 0
+
+    for memory in memories:
+        if isinstance(memory, dict):
+            value = memory.get("memory_value")
+            polarity = memory.get("polarity")
+        else:
+            value = getattr(memory, "memory_value", None)
+            polarity = getattr(memory, "polarity", None)
+
+        phrase = _normalize(value)
+        if not phrase:
+            continue
+
+        variants = [phrase]
+        if phrase.endswith(" food"):
+            variants.append(phrase[:-5].strip())
+
+        matches = any(
+            _contains_phrase(variant, text)
+            or any(_contains_phrase(variant, ingredient) for ingredient in ingredient_values)
+            for variant in variants
+            if variant
+        )
+        if not matches:
+            if polarity == "dislike" and not complete_ingredients:
+                # Menu text is not a complete ingredient declaration. When
+                # the menu cannot establish safety, honor the explicit
+                # restriction conservatively instead of assuming a match is
+                # absent because it was omitted from the description.
+                return True, 0, []
+            continue
+
+        if polarity == "dislike":
+            return True, 0, []
+        if polarity == "like":
+            positive_matches += 1
+
+    if not positive_matches:
+        return False, 0, []
+
+    return False, min(positive_matches, 2) * 6, ["matches a food you like"]
 
 
 def _text(item: dict[str, Any]) -> str:
@@ -20,6 +84,7 @@ def _text(item: dict[str, Any]) -> str:
         item.get("spice_level"),
         item.get("meal"),
         item.get("meal_type"),
+        item.get("ingredients"),
     ]
 
     return " ".join(
@@ -27,6 +92,154 @@ def _text(item: dict[str, Any]) -> str:
         for value in values
         if value is not None
     ).lower()
+
+
+def _ingredient_values(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [part.strip().lower() for part in value.split(",") if part.strip()]
+    if isinstance(value, list):
+        return [str(part).strip().lower() for part in value if str(part).strip()]
+    return []
+
+
+def _contains_phrase(phrase: str, text: str) -> bool:
+    if not phrase or not text:
+        return False
+    escaped_phrase = r"\s+".join(re.escape(part) for part in phrase.split())
+    return bool(re.search(rf"(?<!\w){escaped_phrase}(?!\w)", text))
+
+
+_PLANT_MILK_SOURCES = (
+    "almond", "cashew", "coconut", "hemp", "hazelnut", "macadamia",
+    "oat", "pea", "rice", "soy", "soya",
+)
+
+
+def _is_safe_animal_term_use(
+    phrase: str,
+    text: str,
+    match: re.Match[str],
+) -> bool:
+    """Recognize common negated or plant-based uses of animal terms."""
+    prefix = text[max(0, match.start() - 48):match.start()]
+    suffix = text[match.end():match.end() + 16]
+
+    if re.search(
+        r"(?:\bno|\bwithout|\bfree\s+(?:of|from)|\bnon|"
+        r"\bdoes\s+not\s+contain|\bdoesn't\s+contain)[\s-]*$",
+        prefix,
+    ):
+        return True
+    if re.match(r"^\s*[- ]free\b", suffix):
+        return True
+
+    if phrase in {"milk", "dairy", "meat"}:
+        source_pattern = "|".join(
+            re.escape(source) for source in _PLANT_MILK_SOURCES
+        )
+        if re.search(rf"\b(?:{source_pattern})\s+$", prefix):
+            return True
+        if re.search(r"\b(?:plant(?:[- ]based)?|vegan)\s+$", prefix):
+            return True
+
+    return False
+
+
+def _contains_animal_derived_ingredient(text: str) -> bool:
+    for phrase in _VEGAN_FORBIDDEN:
+        escaped_phrase = r"\s+".join(re.escape(part) for part in phrase.split())
+        for match in re.finditer(rf"(?<!\w){escaped_phrase}(?!\w)", text):
+            if not _is_safe_animal_term_use(phrase, text, match):
+                return True
+    return False
+
+
+def _dietary_labels(item: dict[str, Any]) -> set[str]:
+    labels: set[str] = set()
+    for field in ("dietary", "dietary_labels", "dietary_tags"):
+        value = item.get(field)
+        values = value if isinstance(value, list) else [value]
+        for label in values:
+            if isinstance(label, str):
+                labels.update(part.strip().lower() for part in re.split(r"[,;]", label) if part.strip())
+    return labels
+
+
+_VEGAN_FORBIDDEN = (
+    # Meat and poultry.
+    "meat", "chicken", "turkey", "duck", "beef", "pork", "lamb",
+    "mutton", "veal", "goat", "venison", "bison", "rabbit", "poultry",
+    "lard", "tallow", "suet", "animal fat", "bone broth",
+    # Fish and seafood, including common sauces and extracts.
+    "fish", "fish sauce", "anchovy", "bonito", "dashi", "prawn", "shrimp",
+    "shrimp paste", "crab", "lobster", "seafood", "shellfish", "oyster",
+    "oyster sauce", "mussel", "clam", "scallop", "squid", "octopus",
+    # Dairy and common milk derivatives.
+    "milk", "dairy", "milk powder", "milk solids", "milk protein", "milk fat",
+    "cream", "cheese", "butter", "butterfat", "buttermilk", "yogurt",
+    "yoghurt", "curd", "ghee", "paneer", "whey", "whey powder",
+    "whey protein", "casein", "caseinate", "caseinates", "lactose",
+    "lactalbumin", "lactoglobulin",
+    # Eggs and common egg derivatives; gelatin/collagen and honey.
+    "egg", "eggs", "egg white", "egg yolk", "albumin", "albumen",
+    "ovalbumin", "lysozyme", "gelatin", "gelatine", "collagen", "honey",
+    "beeswax", "propolis", "royal jelly", "rennet", "isinglass", "carmine",
+    "cochineal", "shellac",
+)
+
+_VEGAN_CONTRARY_LABELS = (
+    "non vegetarian", "nonvegetarian", "non veg", "nonveg", "non vegan",
+    "nonvegan", "not vegan", "not vegetarian", "omnivore", "animal based",
+    "contains animal products", "contains meat", "meat eater",
+)
+
+
+def matches_dietary_preference(
+    item: dict[str, Any],
+    dietary_preference: str | None,
+) -> bool:
+    """Apply known dietary exclusions and require evidence for vegan items.
+
+    The current menu service does not define ingredient fields. A menu item
+    can opt into known-safe ingredient matching with ``ingredients`` plus
+    ``ingredients_complete=True``, or provide an explicit vegan dietary label.
+    """
+    preference = _normalize(dietary_preference)
+    if not preference:
+        return True
+
+    labels = _dietary_labels(item)
+    text = _text(item)
+    ingredients = _ingredient_values(item.get("ingredients"))
+    evidence = " ".join((text, *ingredients))
+
+    if "vegan" in preference:
+        normalized_labels = {
+            re.sub(r"[-_]+", " ", label).strip()
+            for label in labels
+        }
+        if any(
+            _contains_phrase(contrary_label, label)
+            for contrary_label in _VEGAN_CONTRARY_LABELS
+            for label in normalized_labels
+        ):
+            return False
+        if _contains_animal_derived_ingredient(evidence):
+            return False
+        if "vegan" in labels:
+            return True
+        return bool(item.get("ingredients_complete") is True and ingredients)
+
+    if "vegetarian" in preference or preference in {"veg", "vegetarian"}:
+        forbidden = (
+            "chicken", "mutton", "lamb", "fish", "prawn", "shrimp",
+            "seafood", "egg", "beef", "pork", "turkey", "duck",
+        )
+        if any(_contains_phrase(term, evidence) for term in forbidden):
+            return False
+        if "non-vegetarian" in labels or "non vegetarian" in labels:
+            return False
+    return True
 
 
 def _price(item: dict[str, Any]) -> float | None:
@@ -57,31 +270,7 @@ def _matches_dietary(
     item: dict[str, Any],
     dietary_preference: str | None,
 ) -> bool:
-    preference = _normalize(dietary_preference)
-
-    if not preference:
-        return True
-
-    text = _text(item)
-
-    if preference in {"veg", "vegetarian"} or "vegetarian" in preference:
-        forbidden = (
-            "chicken",
-            "mutton",
-            "lamb",
-            "fish",
-            "prawn",
-            "prawns",
-            "seafood",
-            "egg",
-            "beef",
-            "pork",
-        )
-
-        if any(token in text for token in forbidden):
-            return False
-
-    return True
+    return matches_dietary_preference(item, dietary_preference)
 
 
 def _matches_meal(
@@ -236,12 +425,20 @@ def _score(
     history_counts: dict[str, int],
     persistent_context: dict[str, Any] | None = None,
     current_restaurant: str | None = None,
+    ai_memories: list[Any] | None = None,
 ) -> tuple[int, list[str]]:
     text = _text(item)
     title = _normalize(item.get("title"))
 
     score = 0
     reasons: list[str] = []
+
+    _, memory_score, memory_reasons = memory_preference_signal(
+        item,
+        ai_memories,
+    )
+    score += memory_score
+    reasons.extend(memory_reasons)
 
     cuisine = _normalize(cuisine_preference)
 
@@ -303,6 +500,7 @@ def rank_recommendations(
     current_restaurant: str | None = None,
     max_price: float | None = None,
     limit: int = 5,
+    ai_memories: list[Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Rank only currently purchasable menu items.
 
@@ -334,6 +532,13 @@ def rank_recommendations(
         if not _matches_dietary(item, dietary_preference):
             continue
 
+        memory_disliked, _, _ = memory_preference_signal(
+            item,
+            ai_memories,
+        )
+        if memory_disliked:
+            continue
+
         if meal_preference and not _matches_meal(
             item,
             meal_preference,
@@ -348,6 +553,7 @@ def rank_recommendations(
             history_counts=history_counts,
             persistent_context=persistent_context,
             current_restaurant=current_restaurant,
+            ai_memories=ai_memories,
         )
 
         candidates.append(

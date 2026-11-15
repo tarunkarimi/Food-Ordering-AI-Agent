@@ -3,6 +3,8 @@
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from src.services.recommendations import get_personalized_recommendations
 
 
@@ -20,6 +22,17 @@ def _prefs(**kwargs):
 def _order(items):
     return SimpleNamespace(
         items_json=json.dumps(items),
+    )
+
+
+@pytest.fixture(autouse=True)
+def empty_ai_memory(monkeypatch):
+    from src.services import recommendations
+
+    monkeypatch.setattr(
+        recommendations,
+        "list_user_memories",
+        lambda db, user_id: [],
     )
 
 
@@ -201,3 +214,108 @@ def test_invalid_menu_prices_are_excluded(
         item["title"]
         for item in result["recommendations"]
     ] == ["Good Item"]
+
+
+def test_conversational_memories_rank_likes_and_exclude_dislikes(
+    monkeypatch,
+):
+    from src.services import recommendations
+
+    monkeypatch.setattr(
+        recommendations,
+        "get_user_preferences",
+        lambda db, user_id: None,
+    )
+    monkeypatch.setattr(
+        recommendations,
+        "list_order_history",
+        lambda db, user_id, limit, offset: [],
+    )
+    monkeypatch.setattr(
+        recommendations,
+        "list_user_memories",
+        lambda db, user_id: [
+            {"memory_value": "spicy chicken", "polarity": "like"},
+            {"memory_value": "paneer", "polarity": "dislike"},
+        ],
+    )
+
+    result = get_personalized_recommendations(
+        object(),
+        user_id=42,
+        menu_items=[
+            {
+                "id": "chicken",
+                "title": "Spicy Chicken Tikka",
+                "description": "chargrilled chicken",
+                "ingredients": ["chicken", "chili", "yogurt"],
+                "ingredients_complete": True,
+                "base_price": 240,
+            },
+            {
+                "id": "paneer",
+                "title": "Paneer Tikka",
+                "description": "vegetarian starter",
+                "base_price": 200,
+            },
+            {
+                "id": "rice",
+                "title": "Vegetable Rice",
+                "description": "mild rice",
+                "ingredients": ["rice", "vegetables"],
+                "ingredients_complete": True,
+                "base_price": 130,
+            },
+        ],
+    )
+
+    assert result["recommendations"][0]["title"] == "Spicy Chicken Tikka"
+    assert all(
+        item["title"] != "Paneer Tikka"
+        for item in result["recommendations"]
+    )
+    assert result["preferences_used"] is True
+
+
+def test_personalized_service_enforces_vegan_menu_evidence(monkeypatch):
+    from src.services import recommendations
+
+    monkeypatch.setattr(
+        recommendations,
+        "get_user_preferences",
+        lambda db, user_id: _prefs(dietary_preference="Vegan"),
+    )
+    monkeypatch.setattr(
+        recommendations,
+        "list_order_history",
+        lambda db, user_id, limit, offset: [],
+    )
+
+    result = get_personalized_recommendations(
+        object(),
+        user_id=42,
+        menu_items=[
+            {
+                "id": "verified",
+                "title": "Chickpea Bowl",
+                "ingredients": ["chickpeas", "lettuce"],
+                "ingredients_complete": True,
+                "base_price": 120,
+            },
+            {
+                "id": "unknown",
+                "title": "House Bowl",
+                "base_price": 110,
+            },
+            {
+                "id": "animal",
+                "title": "Chicken Bowl",
+                "dietary": ["vegan"],
+                "base_price": 130,
+            },
+        ],
+    )
+
+    assert [item["title"] for item in result["recommendations"]] == [
+        "Chickpea Bowl"
+    ]

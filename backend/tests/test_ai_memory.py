@@ -1,6 +1,10 @@
 import json
 
-from src.db.models import OrderHistory, UserAIMemory
+import pytest
+from sqlalchemy import delete
+
+from src.db.database import SessionLocal
+from src.db.models import OrderHistory, User, UserAIMemory
 from src.services.ai_memory import (
     build_ai_memory_context,
     capture_user_message_memories,
@@ -9,6 +13,34 @@ from src.services.ai_memory import (
 )
 
 from tests.test_authenticated_cart import signup_and_login
+
+
+@pytest.fixture(autouse=True)
+def prevent_otp_delivery(monkeypatch):
+    monkeypatch.setattr(
+        "src.api.routes.auth.deliver_verification_code",
+        lambda **kwargs: None,
+    )
+
+
+@pytest.fixture(autouse=True)
+def cleanup_synthetic_users(monkeypatch):
+    """Delete only users created by this test through the shared helper."""
+    created_user_ids = []
+    original_signup = signup_and_login
+
+    def tracked_signup():
+        user_id, token = original_signup()
+        created_user_ids.append(user_id)
+        return user_id, token
+
+    monkeypatch.setitem(globals(), "signup_and_login", tracked_signup)
+    yield
+
+    if created_user_ids:
+        with SessionLocal() as db:
+            db.execute(delete(User).where(User.id.in_(created_user_ids)))
+            db.commit()
 
 
 def test_extract_explicit_positive_preference():

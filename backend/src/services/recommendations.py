@@ -4,7 +4,12 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from src.services.ai_memory import list_user_memories
 from src.services.order_history import list_order_history
+from src.services.recommendation_ranking import (
+    matches_dietary_preference,
+    memory_preference_signal,
+)
 from src.services.user_preferences import get_user_preferences
 
 
@@ -50,36 +55,7 @@ def _matches_dietary_preference(
     item: dict[str, Any],
     dietary_preference: str | None,
 ) -> bool:
-    preference = _normalize(dietary_preference)
-
-    if not preference:
-        return True
-
-    text = _item_text(item)
-
-    if "vegetarian" in preference or preference in {"veg", "vegetarian"}:
-        explicit_non_veg = (
-            "chicken" in text
-            or "mutton" in text
-            or "lamb" in text
-            or "fish" in text
-            or "prawn" in text
-            or "prawns" in text
-            or "seafood" in text
-            or "egg" in text
-            or "beef" in text
-            or "pork" in text
-        )
-
-        explicit_veg = (
-            "vegetarian" in text
-            or "veg" in text
-        )
-
-        if explicit_non_veg and not explicit_veg:
-            return False
-
-    return True
+    return matches_dietary_preference(item, dietary_preference)
 
 
 def _score_item(
@@ -90,12 +66,20 @@ def _score_item(
     dietary_preference: str | None,
     meal_preference: str | None,
     history_counts: dict[str, int],
+    ai_memories: list[Any] | None = None,
 ) -> tuple[int, list[str]]:
     text = _item_text(item)
     title = _normalize(item.get("title"))
 
     score = 0
     reasons: list[str] = []
+
+    _, memory_score, memory_reasons = memory_preference_signal(
+        item,
+        ai_memories,
+    )
+    score += memory_score
+    reasons.extend(memory_reasons)
 
     cuisine = _normalize(cuisine_preference)
     if cuisine and cuisine in text:
@@ -139,6 +123,7 @@ def get_personalized_recommendations(
     """
 
     preferences = get_user_preferences(db, user_id=user_id)
+    ai_memories = list_user_memories(db, user_id=user_id)
 
     cuisine_preference = (
         preferences.cuisine_preference
@@ -216,6 +201,13 @@ def get_personalized_recommendations(
         ):
             continue
 
+        memory_disliked, _, _ = memory_preference_signal(
+            item,
+            ai_memories,
+        )
+        if memory_disliked:
+            continue
+
         score, reasons = _score_item(
             item,
             cuisine_preference=cuisine_preference,
@@ -223,6 +215,7 @@ def get_personalized_recommendations(
             dietary_preference=dietary_preference,
             meal_preference=meal_preference,
             history_counts=history_counts,
+            ai_memories=ai_memories,
         )
 
         recommendations.append(
@@ -244,6 +237,6 @@ def get_personalized_recommendations(
 
     return {
         "recommendations": recommendations[: max(1, limit)],
-        "preferences_used": bool(preferences),
+        "preferences_used": bool(preferences or ai_memories),
         "orders_analyzed": len(orders),
     }

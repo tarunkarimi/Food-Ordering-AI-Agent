@@ -4,10 +4,13 @@ from unittest.mock import Mock
 
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, HumanMessage
+import pytest
+from sqlalchemy import delete
 
 from src.agents.nodes import chatbot as chatbot_module
 from src.agents.nodes.chatbot import chatbot
 from src.db.database import SessionLocal
+from src.db.models import User
 from src.main import app
 from src.services.ai_memory import (
     build_ai_memory_context,
@@ -15,6 +18,34 @@ from src.services.ai_memory import (
 )
 
 from tests.test_ai_memory import signup_and_login
+
+
+@pytest.fixture(autouse=True)
+def prevent_otp_delivery(monkeypatch):
+    monkeypatch.setattr(
+        "src.api.routes.auth.deliver_verification_code",
+        lambda **kwargs: None,
+    )
+
+
+@pytest.fixture(autouse=True)
+def cleanup_synthetic_users(monkeypatch):
+    """Remove only synthetic users created by this module's tests."""
+    created_user_ids = []
+    original_signup = signup_and_login
+
+    def tracked_signup():
+        user_id, token = original_signup()
+        created_user_ids.append(user_id)
+        return user_id, token
+
+    monkeypatch.setitem(globals(), "signup_and_login", tracked_signup)
+    yield
+
+    if created_user_ids:
+        with SessionLocal() as db:
+            db.execute(delete(User).where(User.id.in_(created_user_ids)))
+            db.commit()
 
 
 def _chat_state(user_id=None):
@@ -83,7 +114,10 @@ def test_authenticated_memory_is_injected_into_chatbot(monkeypatch):
     assert len(memory_messages) == 1
     assert "spicy" in memory_messages[0][1].lower()
     assert "historical preference data" in memory_messages[0][1].lower()
-    assert "newer explicit customer request always takes precedence" in (
+    assert "a current explicit request takes precedence" in (
+        memory_messages[0][1].lower()
+    )
+    assert "avoid foods the customer explicitly dislikes" in (
         memory_messages[0][1].lower()
     )
 
@@ -300,4 +334,23 @@ def test_ai_memory_api_can_delete_memory():
 
     assert after_delete.status_code == 200
     assert after_delete.json()["memories"] == []
+
+
+def test_ai_memory_api_can_clear_all_memories():
+    user_id, token = signup_and_login()
+    client = _authenticated_client(token)
+
+    with SessionLocal() as db:
+        capture_user_message_memories(
+            db,
+            user_id=user_id,
+            user_message="I like spicy chicken.",
+        )
+        db.commit()
+
+    response = client.delete("/api/ai-memory")
+
+    assert response.status_code == 200
+    assert response.json()["deleted_count"] == 1
+    assert client.get("/api/ai-memory").json()["memories"] == []
 

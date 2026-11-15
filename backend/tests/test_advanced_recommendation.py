@@ -80,8 +80,18 @@ def test_advanced_recommendation_uses_budget_and_current_menu():
             return_value=preferences,
         ),
         patch(
+            "src.agents.tools.advanced_recommendation.list_user_memories",
+            return_value=[
+                {"memory_value": "spicy chicken", "polarity": "like"},
+            ],
+        ),
+        patch(
             "src.agents.tools.advanced_recommendation.list_order_history",
             return_value=[order],
+        ),
+        patch(
+            "src.agents.tools.advanced_recommendation.build_persistent_ai_ordering_context",
+            return_value={},
         ),
         patch(
             "src.agents.tools.advanced_recommendation.rank_recommendations",
@@ -103,6 +113,9 @@ def test_advanced_recommendation_uses_budget_and_current_menu():
     assert result["recommendations"][0]["title"] == "Spicy Dosa"
 
     assert rank_mock.call_args.kwargs["max_price"] == 300.0
+    assert rank_mock.call_args.kwargs["ai_memories"] == [
+        {"memory_value": "spicy chicken", "polarity": "like"},
+    ]
 
 
 def test_advanced_recommendation_does_not_mutate_cart():
@@ -147,8 +160,16 @@ def test_advanced_recommendation_does_not_mutate_cart():
             return_value=preferences,
         ),
         patch(
+            "src.agents.tools.advanced_recommendation.list_user_memories",
+            return_value=[],
+        ),
+        patch(
             "src.agents.tools.advanced_recommendation.list_order_history",
             return_value=[],
+        ),
+        patch(
+            "src.agents.tools.advanced_recommendation.build_persistent_ai_ordering_context",
+            return_value={},
         ),
         patch(
             "src.agents.tools.advanced_recommendation.rank_recommendations",

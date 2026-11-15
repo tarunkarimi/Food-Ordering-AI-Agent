@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from src.api.dependencies import (
@@ -108,6 +108,7 @@ def remove_all_ai_memories(
         db,
         user_id=auth.user.id,
     )
+    db.commit()
 
     return {
         "success": True,

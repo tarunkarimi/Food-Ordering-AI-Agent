@@ -3,11 +3,12 @@
 import json
 import logging
 from collections.abc import Iterator
+from datetime import datetime, timezone
 from typing import Any
 
+from langchain_core.messages import HumanMessage
+
 from src.agents.graph import chatbot_agent_builder
-from src.db.database import SessionLocal
-from src.services.ai_memory import capture_user_message_memories
 
 logger = logging.getLogger(__name__)
 
@@ -38,42 +39,30 @@ class ChatAgentService:
         subdomain: str,
         user_id: int | str,
         graph_config: dict[str, Any],
+        message_timestamp: datetime | None = None,
         agent: Any | None = None,
     ) -> Iterator[str]:
         """Stream an authenticated chat request as SSE events."""
         active_agent = agent or self.agent
 
         state = {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": user_message,
-                }
-            ],
+            "messages": [HumanMessage(content=user_message)],
             "restaurant_name": restaurant_name,
             "subdomain": subdomain,
             "user_id": user_id,
         }
 
-        try:
-            with SessionLocal() as db:
-                capture_user_message_memories(
-                    db,
-                    user_id=int(user_id),
-                    user_message=user_message,
-                )
-                db.commit()
-        except Exception:
-            logger.exception(
-                "Unable to capture conversational memory for "
-                "authenticated user %s.",
-                user_id,
-            )
+        run_config = dict(graph_config)
+        metadata = dict(graph_config.get("metadata") or {})
+        metadata["memory_message_timestamp"] = (
+            message_timestamp or datetime.now(timezone.utc)
+        ).isoformat()
+        run_config["metadata"] = metadata
 
         try:
             events = active_agent.stream(
                 state,
-                graph_config,
+                run_config,
                 stream_mode="values",
             )
 

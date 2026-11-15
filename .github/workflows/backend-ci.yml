@@ -33,10 +33,14 @@ jobs:
           --health-retries 5
 
     env:
+      CI: "true"
       PORT: "8000"
       MENU_BACKEND_URL: "http://localhost:8001"
       GOOGLE_API_KEY: "ci-test-key"
       DATABASE_URL: "postgresql+psycopg://postgres:postgres@localhost:5432/food_ordering_ci"
+      TEST_DATABASE_URL: "postgresql+psycopg://postgres:postgres@localhost:5432/food_ordering_ci"
+      TEST_DATABASE_NAME: "food_ordering_ci"
+      TEST_DATABASE_CONFIRMATION: "I_ACKNOWLEDGE_TEST_DATABASE:food_ordering_ci"
       JWT_SECRET_KEY: "ci-test-jwt-secret-key-minimum-32-characters"
 
     defaults:
@@ -73,6 +77,9 @@ jobs:
 
       - name: Run auth authorization tests
         run: uv run pytest tests/test_auth_authorization.py -q
+
+      - name: Run authenticated persistence regressions
+        run: uv run pytest tests/test_authenticated_persistence_regressions.py -q
 
   frontend:
     name: Frontend Validation

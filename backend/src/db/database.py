@@ -5,11 +5,14 @@ The connection URL is supplied through ``DATABASE_URL`` and is never hard-coded.
 """
 
 from collections.abc import Generator
+import os
+import sys
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from src.configs.config import config
+from src.db_test_safety import resolve_test_database_url
 
 
 def _normalize_database_url(url: str) -> str:
@@ -22,7 +25,16 @@ def _normalize_database_url(url: str) -> str:
     return url
 
 
-DATABASE_URL = _normalize_database_url(config.DATABASE_URL)
+if "pytest" in sys.modules:
+    DATABASE_URL = resolve_test_database_url(
+        test_database_url=os.environ.get("TEST_DATABASE_URL"),
+        test_database_name=os.environ.get("TEST_DATABASE_NAME"),
+        confirmation=os.environ.get("TEST_DATABASE_CONFIRMATION"),
+        application_database_url=config.DATABASE_URL,
+        ci_environment=os.environ.get("CI", "").casefold() == "true",
+    )
+else:
+    DATABASE_URL = _normalize_database_url(config.DATABASE_URL)
 
 
 engine = create_engine(

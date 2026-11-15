@@ -48,6 +48,19 @@ def test_personalization_prompt_requires_current_menu_for_purchase():
     assert "historical price" in section
 
 
+def test_recommendation_prompt_preserves_budget_and_restriction_priority():
+    section = PROMPT[
+        PROMPT.index("RECOMMENDATION RULES:")
+        : PROMPT.index("REORDER EXAMPLES:")
+    ].lower()
+
+    assert "positive preference override an explicit dislike" in section
+    assert "stated budget" in section
+    assert "estimate based on current menu prices" in section
+    assert "not a checkout total" in section
+    assert "do not invent taxes, delivery charges, discounts" in section
+
+
 def test_personalization_prompt_hides_internal_tool_fields():
     assert "raw personalization tool output" in PROMPT_LOWER
     assert "orders_analyzed" in PROMPT

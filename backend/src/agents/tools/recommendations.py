@@ -8,6 +8,7 @@ from langgraph.prebuilt import InjectedState
 from src.agents.state import OrderState
 from src.agents.tools.cart import _fetch_menu_items
 from src.db.database import SessionLocal
+from src.services.recommendation_ranking import extract_budget
 from src.services.recommendations import get_personalized_recommendations
 
 
@@ -48,11 +49,15 @@ def get_personalized_recommendations(
 
     try:
         with SessionLocal() as db:
+            budget = extract_budget(state.get("messages", []))
             result = get_personalized_recommendations(
                 db,
                 user_id=user_id,
                 menu_items=menu_items,
                 limit=5,
+                max_price=budget,
+                restaurant_name=state.get("restaurant_name"),
+                subdomain=state.get("subdomain"),
             )
     except Exception:
         return {
@@ -64,12 +69,17 @@ def get_personalized_recommendations(
     recommendations = result.get("recommendations", [])
 
     if not recommendations:
-        return {
+        safety_notice = result.get("safety_notice")
+        response = {
             "message": (
                 "I couldn't find a suitable current-menu recommendation "
                 "from your saved preferences and available menu."
             ),
             "recommendations": [],
         }
+        if safety_notice:
+            response["safety_notice"] = safety_notice
+            response["message"] += " " + safety_notice
+        return response
 
     return result

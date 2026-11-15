@@ -1,5 +1,7 @@
 """Context-aware recommendation services."""
 
+import json
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -7,106 +9,16 @@ from sqlalchemy.orm import Session
 from src.services.ai_memory import list_user_memories
 from src.services.order_history import list_order_history
 from src.services.recommendation_ranking import (
-    matches_dietary_preference,
-    memory_preference_signal,
+    build_budget_combinations,
+    has_unknown_dietary_evidence,
+    has_unknown_memory_restriction,
+    rank_recommendations,
 )
 from src.services.user_preferences import get_user_preferences
 
 
 def _normalize(value: object) -> str:
-    if value is None:
-        return ""
-    return str(value).strip().lower()
-
-
-def _item_text(item: dict[str, Any]) -> str:
-    parts = [
-        item.get("title"),
-        item.get("description"),
-        item.get("category"),
-        item.get("cuisine"),
-        item.get("dietary"),
-        item.get("tags"),
-        item.get("spice_level"),
-    ]
-
-    return " ".join(
-        str(part)
-        for part in parts
-        if part is not None
-    ).lower()
-
-
-def _menu_item_price(item: dict[str, Any]) -> float | None:
-    raw_price = item.get("base_price")
-
-    try:
-        price = float(raw_price)
-    except (TypeError, ValueError):
-        return None
-
-    if price < 0:
-        return None
-
-    return price
-
-
-def _matches_dietary_preference(
-    item: dict[str, Any],
-    dietary_preference: str | None,
-) -> bool:
-    return matches_dietary_preference(item, dietary_preference)
-
-
-def _score_item(
-    item: dict[str, Any],
-    *,
-    cuisine_preference: str | None,
-    spice_level: str | None,
-    dietary_preference: str | None,
-    meal_preference: str | None,
-    history_counts: dict[str, int],
-    ai_memories: list[Any] | None = None,
-) -> tuple[int, list[str]]:
-    text = _item_text(item)
-    title = _normalize(item.get("title"))
-
-    score = 0
-    reasons: list[str] = []
-
-    _, memory_score, memory_reasons = memory_preference_signal(
-        item,
-        ai_memories,
-    )
-    score += memory_score
-    reasons.extend(memory_reasons)
-
-    cuisine = _normalize(cuisine_preference)
-    if cuisine and cuisine in text:
-        score += 5
-        reasons.append("matches your cuisine preference")
-
-    spice = _normalize(spice_level)
-    if spice and spice in text:
-        score += 4
-        reasons.append("matches your spice preference")
-
-    meal = _normalize(meal_preference)
-    if meal and meal in text:
-        score += 3
-        reasons.append("matches your meal preference")
-
-    if dietary_preference:
-        score += 4
-        reasons.append("fits your dietary preference")
-
-    history_count = history_counts.get(title, 0)
-
-    if history_count:
-        score += min(history_count * 3, 9)
-        reasons.append("similar to what you have ordered before")
-
-    return score, reasons
+    return str(value).strip().lower() if value is not None else ""
 
 
 def get_personalized_recommendations(
@@ -115,6 +27,9 @@ def get_personalized_recommendations(
     user_id: int,
     menu_items: list[dict[str, Any]],
     limit: int = 5,
+    max_price: float | None = None,
+    restaurant_name: str | None = None,
+    subdomain: str | None = None,
 ) -> dict[str, Any]:
     """Rank current menu items using explicit preferences and order history.
 
@@ -146,18 +61,36 @@ def get_personalized_recommendations(
         else None
     )
 
+    history_filters = {}
+    if subdomain and subdomain.strip():
+        history_filters["subdomain"] = subdomain.strip()
+        if restaurant_name and restaurant_name.strip():
+            history_filters["restaurant_name"] = restaurant_name.strip()
     orders = list_order_history(
         db,
         user_id=user_id,
         limit=20,
         offset=0,
+        **history_filters,
     )
+    # Order-history signals are tenant scoped. Without a stable subdomain we
+    # retain global preferences, but do not guess which restaurant history fits.
+    eligible_orders = []
+    if subdomain and subdomain.strip():
+        tenant = subdomain.strip().casefold()
+        restaurant = _normalize(restaurant_name)
+        eligible_orders = [
+            order for order in orders
+            if str(getattr(order, "subdomain", "")).strip().casefold() == tenant
+            and (not restaurant or _normalize(getattr(order, "restaurant_name", "")) == restaurant)
+            and str(getattr(order, "status", "")).strip().lower()
+            not in {"cancelled", "canceled", "failed", "rejected"}
+        ]
 
     history_counts: dict[str, int] = {}
+    history_signals: dict[str, dict[str, Any]] = {}
 
-    import json
-
-    for order in orders:
+    for order in eligible_orders:
         try:
             items = json.loads(order.items_json)
         except (TypeError, ValueError, json.JSONDecodeError):
@@ -166,6 +99,7 @@ def get_personalized_recommendations(
         if not isinstance(items, list):
             continue
 
+        order_items: dict[str, int] = {}
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -177,66 +111,68 @@ def get_personalized_recommendations(
             )
 
             if title:
-                history_counts[title] = history_counts.get(title, 0) + 1
+                try:
+                    quantity = max(1, int(item.get("quantity", 1)))
+                except (TypeError, ValueError):
+                    quantity = 1
+                order_items[title] = order_items.get(title, 0) + quantity
 
-    recommendations: list[dict[str, Any]] = []
+        timestamp = getattr(order, "created_at", None)
+        if isinstance(timestamp, datetime):
+            if timestamp.tzinfo is None:
+                timestamp = timestamp.replace(tzinfo=timezone.utc)
+            else:
+                timestamp = timestamp.astimezone(timezone.utc)
+        for title, quantity in order_items.items():
+            detail = history_signals.setdefault(
+                title,
+                {"order_count": 0, "total_quantity": 0, "last_ordered_at": None},
+            )
+            detail["order_count"] += 1
+            detail["total_quantity"] += quantity
+            if isinstance(timestamp, datetime) and (
+                detail["last_ordered_at"] is None
+                or timestamp > detail["last_ordered_at"]
+            ):
+                detail["last_ordered_at"] = timestamp
+            history_counts[title] = detail["order_count"]
 
-    for item in menu_items:
-        if not isinstance(item, dict):
-            continue
-
-        title = str(item.get("title") or "").strip()
-
-        if not title:
-            continue
-
-        price = _menu_item_price(item)
-
-        if price is None:
-            continue
-
-        if not _matches_dietary_preference(
-            item,
-            dietary_preference,
-        ):
-            continue
-
-        memory_disliked, _, _ = memory_preference_signal(
-            item,
-            ai_memories,
-        )
-        if memory_disliked:
-            continue
-
-        score, reasons = _score_item(
-            item,
-            cuisine_preference=cuisine_preference,
-            spice_level=spice_level,
-            dietary_preference=dietary_preference,
-            meal_preference=meal_preference,
-            history_counts=history_counts,
-            ai_memories=ai_memories,
-        )
-
-        recommendations.append(
-            {
-                "item_id": item.get("id"),
-                "title": title,
-                "current_price": price,
-                "score": score,
-                "reasons": reasons,
-            }
-        )
-
-    recommendations.sort(
-        key=lambda recommendation: (
-            -recommendation["score"],
-            recommendation["title"].lower(),
-        )
+    recommendations = rank_recommendations(
+        menu_items,
+        cuisine_preference=cuisine_preference,
+        spice_level=spice_level,
+        dietary_preference=dietary_preference,
+        meal_preference=meal_preference,
+        history_counts=history_counts,
+        history_signals=history_signals,
+        ai_memories=ai_memories,
+        max_price=max_price,
+        limit=limit,
     )
 
-    return {
+    limited_by_safety = any(
+        has_unknown_memory_restriction(item, ai_memories)
+        or has_unknown_dietary_evidence(item, dietary_preference)
+        for item in menu_items
+        if isinstance(item, dict)
+    )
+    result = {
         "recommendations": recommendations[: max(1, limit)],
+        "budget_combinations": build_budget_combinations(
+            recommendations,
+            max_price,
+        ),
+        "budget_applied": max_price,
         "preferences_used": bool(preferences or ai_memories),
-        "orders_analyzed": len(orders),
+        "orders_analyzed": len(eligible_orders),
     }
+    if limited_by_safety:
+        result["recommendations_limited"] = True
+        result["safety_notice"] = (
+            "Some menu items were excluded because ingredient information is "
+            "incomplete. Their safety against your stated restrictions could "
+            "not be verified; please confirm ingredients with the restaurant."
+        )
+    else:
+        result["recommendations_limited"] = False
+    return result

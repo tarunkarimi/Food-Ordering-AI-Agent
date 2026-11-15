@@ -82,7 +82,7 @@ def fake_menu(*args, **kwargs):
     return MENU_ITEMS, None
 
 
-@patch("src.services.reorder._fetch_menu_items", side_effect=fake_menu)
+@patch("src.services.reorder._fetch_menu_items_for_tenant", side_effect=fake_menu)
 def test_reorder_returns_current_menu_item_and_price(mock_menu):
     user_id, token = signup_and_login()
 
@@ -120,7 +120,7 @@ def test_reorder_returns_current_menu_item_and_price(mock_menu):
     assert data["items"][0]["variation"]["price"] == 220.0
 
 
-@patch("src.services.reorder._fetch_menu_items", side_effect=fake_menu)
+@patch("src.services.reorder._fetch_menu_items_for_tenant", side_effect=fake_menu)
 def test_reorder_supports_current_no_variation_item(mock_menu):
     user_id, token = signup_and_login()
 
@@ -152,7 +152,7 @@ def test_reorder_supports_current_no_variation_item(mock_menu):
     assert item["variation"] is None
 
 
-@patch("src.services.reorder._fetch_menu_items", return_value=([], None))
+@patch("src.services.reorder._fetch_menu_items_for_tenant", return_value=([], None))
 def test_reorder_rejects_removed_item(mock_menu):
     user_id, token = signup_and_login()
 
@@ -168,7 +168,7 @@ def test_reorder_rejects_removed_item(mock_menu):
 
 
 @patch(
-    "src.services.reorder._fetch_menu_items",
+    "src.services.reorder._fetch_menu_items_for_tenant",
     return_value=(
         [
             {
@@ -203,7 +203,7 @@ def test_reorder_rejects_removed_variation(mock_menu):
 
 
 @patch(
-    "src.services.reorder._fetch_menu_items",
+    "src.services.reorder._fetch_menu_items_for_tenant",
     return_value=([], "The menu service is unavailable. Please try again."),
 )
 def test_reorder_returns_503_when_menu_service_fails(mock_menu):
@@ -217,7 +217,8 @@ def test_reorder_returns_503_when_menu_service_fails(mock_menu):
     )
 
     assert response.status_code == 503
-    assert "menu service is unavailable" in response.json()["detail"].lower()
+    assert "menu could not be verified" in response.json()["detail"].lower()
+    assert "not added to your cart" in response.json()["detail"].lower()
 
 
 def test_reorder_requires_authentication():

@@ -3,6 +3,7 @@ from langgraph.graph import StateGraph, START, END
 from unittest.mock import Mock, patch
 
 import requests
+import pytest
 
 import sys
 from pathlib import Path
@@ -79,6 +80,8 @@ def run_tool(state, tool_name, args, tool_call_id):
 def menu_response(items=None):
     response = Mock()
     response.json.return_value = {
+        "restaurant_name": "Test Restaurant",
+        "subdomain": "test",
         "items": items
         if items is not None
         else [
@@ -542,6 +545,38 @@ def test_add_cart_uses_authoritative_menu_price():
 
     assert get.call_args.kwargs["timeout"] == 10
     assert result["cart"].items[0].units[0].base_price == 220.0
+
+
+@pytest.mark.parametrize("returned_subdomain", [None, "", "other"])
+def test_add_cart_rejects_unconfirmed_menu_tenant_without_mutation(returned_subdomain):
+    state = make_state(Cart(items=[]))
+    response = menu_response()
+    payload = response.json.return_value
+    if returned_subdomain is None:
+        payload.pop("subdomain")
+    else:
+        payload["subdomain"] = returned_subdomain
+
+    with patch(
+        "src.agents.tools.cart.requests.get", return_value=response
+    ):
+        result = run_tool(
+            state,
+            "add_cart",
+            {
+                "item_id": "item-001",
+                "title": "Chicken Biryani",
+                "new_item": {
+                    "key": "item-001|no_variant",
+                    "quantity": 1,
+                    "base_price": 220.0,
+                },
+            },
+            "test-add-wrong-tenant",
+        )
+
+    assert result["cart"].items == []
+    assert "Cannot add item" in result["messages"][-1].content
 
 
 def test_add_cart_rejects_invalid_quantity_and_menu_item():

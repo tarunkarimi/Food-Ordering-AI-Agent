@@ -54,7 +54,10 @@ def reorder_order(
     except ConnectionError as exc:
         raise HTTPException(
             status_code=503,
-            detail=str(exc),
+            detail=(
+                "The current restaurant menu could not be verified. "
+                "The reorder was not added to your cart. Please try again."
+            ),
         ) from exc
     except ValueError as exc:
         raise HTTPException(

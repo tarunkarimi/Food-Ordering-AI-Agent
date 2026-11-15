@@ -69,6 +69,8 @@ def test_chat_agent_service_streams_done_event():
     assert '"type": "AIMessage"' in events[0]
     assert '"content": "Hello"' in events[0]
     assert events[1] == "data: [DONE]\n\n"
+    streamed_state = service.agent.stream.call_args.args[0]
+    assert streamed_state["subdomain"] == "test"
 
 
 def test_chat_agent_service_converts_agent_errors_to_sse():

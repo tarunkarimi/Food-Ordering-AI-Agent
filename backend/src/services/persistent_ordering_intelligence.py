@@ -1,17 +1,11 @@
-﻿from datetime import datetime, timezone
+from datetime import datetime, timezone
+from decimal import Decimal
 import json
 
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from src.db.models.order_history import OrderHistory
-from src.db.models.ordering_intelligence import (
-    UserOrderingItemStat,
-    UserOrderingProfile,
-    UserOrderingRestaurantStat,
-)
-from src.db.models.ordering_processed_order import UserOrderingProcessedOrder
 
 
 def _load_json(value, default):
@@ -23,10 +17,6 @@ def _load_json(value, default):
         return parsed if isinstance(parsed, type(default)) else default.copy()
     except (TypeError, ValueError, json.JSONDecodeError):
         return default.copy() if isinstance(default, dict) else list(default)
-
-
-def _dump_json(value):
-    return json.dumps(value, separators=(",", ":"))
 
 
 def _load_items(order: OrderHistory):
@@ -67,276 +57,86 @@ def _meal_period(timestamp):
     return "late_night"
 
 
-def _get_or_create_profile(
-    db: Session,
-    user_id: int,
-    lock: bool = False,
-):
-    profile_insert = (
-        insert(UserOrderingProfile)
-        .values(
-            user_id=user_id,
-            total_orders=0,
-            total_items=0,
-            total_spend=0,
-            average_order_value=0,
-            weekday_counts_json=_dump_json({}),
-            meal_period_counts_json=_dump_json({}),
-            updated_at=datetime.now(timezone.utc),
-        )
-        .on_conflict_do_nothing(
-            index_elements=[UserOrderingProfile.user_id],
-        )
-    )
-
-    db.execute(profile_insert)
-
-    query = select(UserOrderingProfile).where(
-        UserOrderingProfile.user_id == user_id
-    )
-
-    if lock:
-        query = query.with_for_update()
-
-    return db.execute(query).scalar_one()
-
-
 def record_order_intelligence(
     db: Session,
     user_id: int,
     order: OrderHistory,
-) -> UserOrderingProfile:
-    """Record one order into persistent ordering intelligence.
+) -> None:
+    """Reject writes to legacy aggregates that lack stable tenant keys.
 
-    Processing is idempotent per user/order. The profile row is locked while
-    aggregation is performed so concurrent orders for the same user cannot
-    overwrite each other's totals.
+    UserOrderingItemStat and UserOrderingRestaurantStat identify restaurants
+    by display name only. Existing rows are retained but never read as
+    tenant-specific data. Tenant-scoped profiles are computed from
+    OrderHistory instead; writing new legacy rows is intentionally disabled
+    until a tenant-aware schema is available.
     """
-
-    processed_insert = (
-        insert(UserOrderingProcessedOrder)
-        .values(
-            user_id=user_id,
-            order_id=order.order_id,
-            processed_at=datetime.now(timezone.utc),
-        )
-        .on_conflict_do_nothing(
-            index_elements=[
-                UserOrderingProcessedOrder.user_id,
-                UserOrderingProcessedOrder.order_id,
-            ],
-        )
-        .returning(UserOrderingProcessedOrder.id)
+    raise RuntimeError(
+        "Legacy ordering aggregates are disabled because they are not tenant-scoped."
     )
-
-    processed_id = db.execute(processed_insert).scalar_one_or_none()
-
-    if processed_id is None:
-        return _get_or_create_profile(db, user_id)
-
-    profile = _get_or_create_profile(
-        db,
-        user_id,
-        lock=True,
-    )
-
-    order_timestamp = order.created_at or datetime.now(timezone.utc)
-
-    if order_timestamp.tzinfo is None:
-        order_timestamp = order_timestamp.replace(tzinfo=timezone.utc)
-
-    items = _load_items(order)
-    total_items = sum(_quantity(item) for item in items)
-
-    profile.total_orders = (profile.total_orders or 0) + 1
-    profile.total_items = (profile.total_items or 0) + total_items
-    profile.total_spend = (profile.total_spend or 0) + (order.subtotal or 0)
-
-    profile.average_order_value = (
-        profile.total_spend / profile.total_orders
-        if profile.total_orders
-        else 0
-    )
-
-    profile.last_order_id = order.order_id
-    profile.last_order_at = order_timestamp
-    profile.updated_at = datetime.now(timezone.utc)
-
-    weekday_counts = _load_json(
-        profile.weekday_counts_json,
-        {},
-    )
-
-    weekday = order_timestamp.strftime("%A").lower()
-    weekday_counts[weekday] = weekday_counts.get(weekday, 0) + 1
-    profile.weekday_counts_json = _dump_json(weekday_counts)
-
-    meal_period_counts = _load_json(
-        profile.meal_period_counts_json,
-        {},
-    )
-
-    meal_period = _meal_period(order_timestamp)
-    meal_period_counts[meal_period] = (
-        meal_period_counts.get(meal_period, 0) + 1
-    )
-    profile.meal_period_counts_json = _dump_json(meal_period_counts)
-
-    restaurant = db.execute(
-        select(UserOrderingRestaurantStat).where(
-            UserOrderingRestaurantStat.user_id == user_id,
-            UserOrderingRestaurantStat.restaurant_name
-            == order.restaurant_name,
-        )
-    ).scalar_one_or_none()
-
-    if restaurant is None:
-        restaurant = UserOrderingRestaurantStat(
-            user_id=user_id,
-            restaurant_name=order.restaurant_name,
-            order_count=0,
-            total_spend=0,
-        )
-        db.add(restaurant)
-
-    restaurant.order_count = (restaurant.order_count or 0) + 1
-    restaurant.total_spend = (
-        restaurant.total_spend or 0
-    ) + (order.subtotal or 0)
-
-    for item in items:
-        item_key = _item_key(item)
-
-        if not item_key:
-            continue
-
-        item_title = _item_title(item)
-        quantity = _quantity(item)
-
-        item_stat = db.execute(
-            select(UserOrderingItemStat).where(
-                UserOrderingItemStat.user_id == user_id,
-                UserOrderingItemStat.item_key == item_key,
-                UserOrderingItemStat.restaurant_name
-                == order.restaurant_name,
-            )
-        ).scalar_one_or_none()
-
-        if item_stat is None:
-            item_stat = UserOrderingItemStat(
-                user_id=user_id,
-                item_key=item_key,
-                item_title=item_title,
-                restaurant_name=order.restaurant_name,
-                order_count=0,
-                total_quantity=0,
-                last_ordered_at=order_timestamp,
-            )
-            db.add(item_stat)
-
-        item_stat.item_title = item_title
-        item_stat.order_count = (item_stat.order_count or 0) + 1
-        item_stat.total_quantity = (
-            item_stat.total_quantity or 0
-        ) + quantity
-        item_stat.last_ordered_at = order_timestamp
-
-    db.flush()
-
-    return profile
 
 
 def get_persistent_ordering_profile(
     db: Session,
     user_id: int,
     restaurant_name: str | None = None,
+    subdomain: str | None = None,
 ):
-    profile = _get_or_create_profile(db, user_id)
+    """Return a tenant-scoped profile using source order rows.
 
-    item_query = select(UserOrderingItemStat).where(
-        UserOrderingItemStat.user_id == user_id
+    Legacy summary tables key restaurants by display name. They cannot safely
+    answer tenant-specific profile requests when names are duplicated, so this
+    endpoint resolves one unambiguous tenant and aggregates its order rows.
+    """
+    context = build_persistent_ai_ordering_context(
+        db,
+        user_id=user_id,
+        restaurant_name=restaurant_name,
+        subdomain=subdomain,
     )
-
-    if restaurant_name:
-        item_query = item_query.where(
-            UserOrderingItemStat.restaurant_name == restaurant_name
-        )
-
-    item_stats = db.execute(
-        item_query.order_by(
-            UserOrderingItemStat.order_count.desc(),
-            UserOrderingItemStat.total_quantity.desc(),
-            UserOrderingItemStat.last_ordered_at.desc(),
-        )
-    ).scalars().all()
-
-    restaurant_stats = db.execute(
-        select(UserOrderingRestaurantStat)
-        .where(UserOrderingRestaurantStat.user_id == user_id)
-        .order_by(
-            UserOrderingRestaurantStat.order_count.desc(),
-            UserOrderingRestaurantStat.total_spend.desc(),
-        )
-    ).scalars().all()
-
-    weekday_patterns = _load_json(
-        profile.weekday_counts_json,
-        {},
-    )
-
-    meal_period_patterns = _load_json(
-        profile.meal_period_counts_json,
-        {},
-    )
-
-    favorite_items = [
-        {
-            "item_key": item.item_key,
-            "item_title": item.item_title,
-            "restaurant_name": item.restaurant_name,
-            "order_count": item.order_count,
-            "total_quantity": item.total_quantity,
-            "last_ordered_at": item.last_ordered_at,
-        }
-        for item in item_stats[:10]
-    ]
-
-    favorite_restaurants = [
-        {
-            "restaurant_name": restaurant.restaurant_name,
-            "order_count": restaurant.order_count,
-            "total_spend": float(restaurant.total_spend or 0),
-        }
-        for restaurant in restaurant_stats[:10]
-    ]
-
-    return {
-        "user_id": user_id,
-        "total_orders": profile.total_orders or 0,
-        "total_items": profile.total_items or 0,
-        "total_spend": float(profile.total_spend or 0),
-        "average_order_value": float(
-            profile.average_order_value or 0
-        ),
-        "last_order_id": profile.last_order_id,
-        "last_order_at": profile.last_order_at,
-        "weekday_patterns": weekday_patterns,
-        "meal_period_patterns": meal_period_patterns,
-        "favorite_items": favorite_items,
-        "favorite_restaurants": favorite_restaurants,
-    }
+    history = context["ordering_history"]
+    return {"user_id": user_id, **history}
 
 
 def build_persistent_ai_ordering_context(
     db: Session,
     user_id: int,
     restaurant_name: str | None = None,
+    subdomain: str | None = None,
 ):
-    profile = get_persistent_ordering_profile(
+    """Build AI context from order rows scoped to one verified tenant.
+
+    The legacy aggregate tables use restaurant display name as their tenant
+    key. Recompute this context from OrderHistory, whose rows carry subdomain,
+    so identically named restaurants cannot share item/order signals.
+    """
+    if subdomain is None:
+        tenant = _resolve_unique_ordering_subdomain(
+            db,
+            user_id=user_id,
+        ) or ""
+    elif (
+        not isinstance(subdomain, str)
+        or not subdomain.strip()
+        or subdomain != subdomain.strip()
+    ):
+        return _empty_ai_ordering_context()
+    else:
+        tenant = subdomain
+    if not tenant:
+        return _empty_ai_ordering_context()
+
+    orders = _load_tenant_order_history(
         db,
-        user_id,
+        user_id=user_id,
+        subdomain=tenant,
         restaurant_name=restaurant_name,
     )
+    orders = [
+        order for order in orders
+        if str(getattr(order, "status", "")).strip().lower()
+        not in {"cancelled", "canceled", "failed", "rejected"}
+    ]
+    profile = _aggregate_tenant_ordering_context(orders)
 
     return {
         "ordering_history": {
@@ -355,4 +155,153 @@ def build_persistent_ai_ordering_context(
         "meal_period_patterns": profile["meal_period_patterns"],
         "favorite_items": profile["favorite_items"],
         "favorite_restaurants": profile["favorite_restaurants"],
+    }
+
+
+def _resolve_unique_ordering_subdomain(
+    db: Session,
+    *,
+    user_id: int,
+) -> str | None:
+    values = db.scalars(
+        select(OrderHistory.subdomain)
+        .where(
+            OrderHistory.user_id == user_id,
+            OrderHistory.subdomain.is_not(None),
+            OrderHistory.subdomain != "",
+        )
+        .distinct()
+        .limit(2)
+    ).all()
+    if (
+        len(values) != 1
+        or not isinstance(values[0], str)
+        or not values[0].strip()
+        or values[0] != values[0].strip()
+    ):
+        return None
+    return values[0]
+
+
+def _load_tenant_order_history(
+    db: Session,
+    *,
+    user_id: int,
+    subdomain: str,
+    restaurant_name: str | None,
+) -> list[OrderHistory]:
+    query = select(OrderHistory).where(
+        OrderHistory.user_id == user_id,
+        OrderHistory.subdomain == subdomain,
+    )
+    if restaurant_name and restaurant_name.strip():
+        query = query.where(OrderHistory.restaurant_name == restaurant_name.strip())
+    return list(
+        db.scalars(
+            query.order_by(
+                OrderHistory.created_at.desc(),
+                OrderHistory.id.desc(),
+            )
+        ).all()
+    )
+
+
+def _empty_ai_ordering_context() -> dict:
+    empty = {
+        "total_orders": 0,
+        "total_items": 0,
+        "total_spend": 0.0,
+        "average_order_value": 0.0,
+        "last_order_id": None,
+        "last_order_at": None,
+        "weekday_patterns": {},
+        "meal_period_patterns": {},
+        "favorite_items": [],
+        "favorite_restaurants": [],
+    }
+    return {
+        "ordering_history": dict(empty),
+        "weekday_patterns": {},
+        "meal_period_patterns": {},
+        "favorite_items": [],
+        "favorite_restaurants": [],
+    }
+
+
+def _aggregate_tenant_ordering_context(orders: list[OrderHistory]) -> dict:
+    total_spend = Decimal("0")
+    total_items = 0
+    weekday_patterns: dict[str, int] = {}
+    meal_period_patterns: dict[str, int] = {}
+    item_stats: dict[str, dict] = {}
+    restaurant_stats: dict[str, dict] = {}
+
+    for order in orders:
+        timestamp = order.created_at or datetime.now(timezone.utc)
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        items = _load_items(order)
+        quantity_sum = sum(_quantity(item) for item in items)
+        total_items += quantity_sum
+        total_spend += Decimal(str(order.subtotal or 0))
+        weekday = timestamp.strftime("%A").lower()
+        weekday_patterns[weekday] = weekday_patterns.get(weekday, 0) + 1
+        meal_period = _meal_period(timestamp)
+        meal_period_patterns[meal_period] = meal_period_patterns.get(meal_period, 0) + 1
+
+        restaurant_name = str(order.restaurant_name or "").strip()
+        restaurant = restaurant_stats.setdefault(
+            restaurant_name,
+            {"restaurant_name": restaurant_name, "order_count": 0, "total_spend": Decimal("0")},
+        )
+        restaurant["order_count"] += 1
+        restaurant["total_spend"] += Decimal(str(order.subtotal or 0))
+
+        for item in items:
+            key = _item_key(item)
+            if not key:
+                continue
+            stat = item_stats.setdefault(
+                key,
+                {
+                    "item_key": key,
+                    "item_title": _item_title(item),
+                    "restaurant_name": restaurant_name,
+                    "order_count": 0,
+                    "total_quantity": 0,
+                    "last_ordered_at": timestamp,
+                },
+            )
+            stat["item_title"] = _item_title(item)
+            stat["order_count"] += 1
+            stat["total_quantity"] += _quantity(item)
+            if timestamp > stat["last_ordered_at"]:
+                stat["last_ordered_at"] = timestamp
+
+    latest = orders[0] if orders else None
+    sorted_items = sorted(
+        item_stats.values(),
+        key=lambda item: (
+            -item["order_count"], -item["total_quantity"],
+            item["item_title"].casefold(),
+        ),
+    )[:10]
+    favorites = sorted(
+        restaurant_stats.values(),
+        key=lambda item: (-item["order_count"], -item["total_spend"]),
+    )[:10]
+    for favorite in favorites:
+        favorite["total_spend"] = float(favorite["total_spend"])
+
+    return {
+        "total_orders": len(orders),
+        "total_items": total_items,
+        "total_spend": float(total_spend),
+        "average_order_value": float(total_spend / len(orders)) if orders else 0.0,
+        "last_order_id": latest.order_id if latest else None,
+        "last_order_at": latest.created_at if latest else None,
+        "weekday_patterns": weekday_patterns,
+        "meal_period_patterns": meal_period_patterns,
+        "favorite_items": sorted_items,
+        "favorite_restaurants": favorites,
     }

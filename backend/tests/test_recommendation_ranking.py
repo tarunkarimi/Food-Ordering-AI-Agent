@@ -1,8 +1,14 @@
 """Tests for advanced recommendation ranking."""
 
 import pytest
+from datetime import datetime, timedelta, timezone
 
-from src.services.recommendation_ranking import rank_recommendations
+from src.services.recommendation_ranking import (
+    build_budget_combinations,
+    extract_budget,
+    has_unknown_memory_restriction,
+    rank_recommendations,
+)
 
 
 def test_rank_applies_budget_and_preferences():
@@ -11,6 +17,7 @@ def test_rank_applies_budget_and_preferences():
             "id": "1",
             "title": "Spicy South Indian Dosa",
             "description": "spicy South Indian dinner",
+            "dietary": ["vegetarian"],
             "base_price": 250,
         },
         {
@@ -412,3 +419,187 @@ def test_vegan_filter_uses_complete_ingredients_and_avoids_substring_matches():
     )
 
     assert [item["item_id"] for item in result] == ["verified-plant-based"]
+
+
+def test_negative_memory_wins_over_positive_and_structured_signals():
+    result = rank_recommendations(
+        [
+            {
+                "id": "chicken",
+                "title": "Spicy Chicken Curry",
+                "description": "South Indian dinner",
+                "base_price": 240,
+            },
+            {
+                "id": "rice",
+                "title": "South Indian Rice",
+                "ingredients": ["rice", "cumin"],
+                "ingredients_complete": True,
+                "meal": "dinner",
+                "base_price": 180,
+            },
+        ],
+        cuisine_preference="South Indian",
+        spice_level="spicy",
+        meal_preference="dinner",
+        ai_memories=[
+            {"memory_value": "spicy chicken", "polarity": "like"},
+            {"memory_value": "chicken", "polarity": "dislike"},
+        ],
+    )
+
+    assert [item["item_id"] for item in result] == ["rice"]
+
+
+def test_disliked_ingredient_known_match_is_excluded():
+    result = rank_recommendations(
+        [{
+            "id": "paneer", "title": "House Bowl", "base_price": 100,
+            "ingredients": ["rice", "paneer"], "ingredients_complete": True,
+        }],
+        ai_memories=[{"memory_value": "paneer", "polarity": "dislike"}],
+    )
+    assert result == []
+
+
+def test_verified_nonmatch_is_rankable_and_unknown_is_not_claimed_safe():
+    memory = [{"memory_value": "paneer", "polarity": "dislike"}]
+    known_safe = {
+        "id": "verified", "title": "Rice Bowl", "base_price": 100,
+        "ingredients": ["rice", "vegetables"], "ingredients_complete": True,
+    }
+    unknown = {"id": "unknown", "title": "House Bowl", "base_price": 90}
+    result = rank_recommendations([known_safe, unknown], ai_memories=memory)
+    assert [item["item_id"] for item in result] == ["verified"]
+    assert has_unknown_memory_restriction(unknown, memory)
+    assert not has_unknown_memory_restriction(known_safe, memory)
+
+
+def test_multiple_dislikes_and_positive_preference_conflict():
+    memories = [
+        {"memory_value": "spicy chicken", "polarity": "like"},
+        {"memory_value": "paneer", "polarity": "dislike"},
+        {"memory_value": "peanut", "polarity": "dislike"},
+    ]
+    result = rank_recommendations(
+        [
+            {
+                "id": "chicken", "title": "Spicy Chicken", "base_price": 100,
+                "ingredients": ["chicken", "rice"], "ingredients_complete": True,
+            },
+            {
+                "id": "paneer", "title": "Paneer Bowl", "base_price": 90,
+                "ingredients": ["paneer", "rice"], "ingredients_complete": True,
+            },
+            {
+                "id": "safe", "title": "Vegetable Rice", "base_price": 80,
+                "ingredients": ["rice", "vegetables"], "ingredients_complete": True,
+            },
+        ],
+        ai_memories=memories,
+    )
+    assert [item["title"] for item in result] == ["Spicy Chicken", "Vegetable Rice"]
+
+
+def test_frequency_and_recency_rank_repeated_recent_orders_explainably():
+    now = datetime(2026, 11, 15, tzinfo=timezone.utc)
+    result = rank_recommendations(
+        [
+            {"id": "old", "title": "Old Favorite", "base_price": 100},
+            {"id": "new", "title": "Recent Favorite", "base_price": 120},
+            {"id": "single", "title": "One Time Pick", "base_price": 90},
+        ],
+        history_counts={"old favorite": 3, "recent favorite": 2, "one time pick": 1},
+        history_signals={
+            "old favorite": {
+                "order_count": 3,
+                "total_quantity": 4,
+                "last_ordered_at": now - timedelta(days=120),
+            },
+            "recent favorite": {
+                "order_count": 2,
+                "total_quantity": 2,
+                "last_ordered_at": now - timedelta(days=2),
+            },
+            "one time pick": {
+                "order_count": 1,
+                "total_quantity": 1,
+                "last_ordered_at": now - timedelta(days=1),
+            },
+        },
+        reference_time=now,
+    )
+
+    assert [item["title"] for item in result] == [
+        "Recent Favorite",
+        "Old Favorite",
+        "One Time Pick",
+    ]
+    assert "frequently ordered favorite" in result[0]["reasons"]
+    assert "ordered recently" in result[0]["reasons"]
+    assert "previously ordered" in result[2]["reasons"]
+
+
+def test_rank_skips_unavailable_and_duplicate_menu_entries():
+    result = rank_recommendations(
+        [
+            {"id": "sold", "title": "Sold Out Curry", "base_price": 100, "available": False},
+            {"id": "live", "title": "Live Curry", "base_price": 100},
+            {"id": "live", "title": "Live Curry Duplicate", "base_price": 100},
+            {"id": "live-2", "title": "Live Curry", "base_price": 110},
+            {"title": "Discontinued Soup", "status": "discontinued", "base_price": 80},
+        ]
+    )
+
+    assert [item["title"] for item in result] == ["Live Curry"]
+
+
+@pytest.mark.parametrize(
+    ("utterance", "expected"),
+    [
+        ("Keep dinner under ₹450 for two.", 450.0),
+        ("My budget is 600", 600.0),
+        ("Spend no more than Rs. 325.50", 325.5),
+        ("I want recommendations", None),
+    ],
+)
+def test_extract_budget_reads_explicit_latest_cap(utterance, expected):
+    from types import SimpleNamespace
+
+    assert extract_budget([SimpleNamespace(content=utterance)]) == expected
+
+
+def test_budget_combinations_use_current_prices_and_never_exceed_cap():
+    combinations = build_budget_combinations(
+        [
+            {"item_id": "main", "title": "Curry", "current_price": 240, "score": 8},
+            {"item_id": "side", "title": "Rice", "current_price": 120, "score": 4},
+            {"item_id": "drink", "title": "Lassi", "current_price": 80, "score": 3},
+            {"item_id": "too-high", "title": "Thali", "current_price": 700, "score": 20},
+            {"item_id": "dup", "title": "Rice", "current_price": 100, "score": 3},
+        ],
+        350,
+    )
+
+    assert combinations
+    assert all(combo["estimated_total"] <= 350 for combo in combinations)
+    assert all(len({item["title"] for item in combo["items"]}) == 2 for combo in combinations)
+    assert all("checkout changes" in combo["pricing_note"] for combo in combinations)
+    assert all("Thali" not in {item["title"] for item in combo["items"]} for combo in combinations)
+
+
+def test_budget_combination_overflow_and_invalid_prices_are_rejected():
+    assert build_budget_combinations(
+        [
+            {"item_id": "a", "title": "A", "current_price": 200},
+            {"item_id": "b", "title": "B", "current_price": 201},
+        ],
+        400,
+    ) == []
+    assert build_budget_combinations(
+        [
+            {"item_id": "a", "title": "A", "current_price": "unknown"},
+            {"item_id": "b", "title": "B", "current_price": 10},
+        ],
+        400,
+    ) == []

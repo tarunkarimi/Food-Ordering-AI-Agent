@@ -117,6 +117,15 @@ def _item_summary(item: dict) -> str:
     return text
 
 
+def _valid_tenant_identity(value: Any) -> bool:
+    """Accept only nonblank canonical identities with no hidden whitespace."""
+    return (
+        isinstance(value, str)
+        and bool(value.strip())
+        and value == value.strip()
+    )
+
+
 @tool
 def reorder_previous_order(
     tool_call_id: Annotated[str, InjectedToolCallId],
@@ -149,8 +158,19 @@ def reorder_previous_order(
             tool_call_id,
         )
 
-    restaurant_name = state["restaurant_name"]
-    subdomain = state["subdomain"]
+    restaurant_name = state.get("restaurant_name")
+    subdomain = state.get("subdomain")
+    if (
+        not _valid_tenant_identity(restaurant_name)
+        or not _valid_tenant_identity(subdomain)
+    ):
+        return _failure(
+            (
+                "I couldn't verify the current restaurant, "
+                "so your cart was not changed."
+            ),
+            tool_call_id,
+        )
 
     requested_order_id = order_id.strip() if order_id else None
 
@@ -159,18 +179,52 @@ def reorder_previous_order(
 
     try:
         with SessionLocal() as db:
-            context = {
+            lookup_context = {
                 "db": db,
                 "user_id": user_id,
                 "order_id": requested_order_id,
-                "restaurant_name": restaurant_name,
-                "subdomain": subdomain,
             }
 
             historical_result = _call_service(
                 get_reorder_items,
-                context,
+                lookup_context,
             )
+
+            if not isinstance(historical_result, dict):
+                return _failure(
+                    (
+                        "I couldn't verify the restaurant for that order, "
+                        "so your cart was not changed."
+                    ),
+                    tool_call_id,
+                )
+
+            historical_restaurant = historical_result.get("restaurant_name")
+            historical_subdomain = historical_result.get("subdomain")
+            if (
+                not _valid_tenant_identity(historical_restaurant)
+                or not _valid_tenant_identity(historical_subdomain)
+            ):
+                return _failure(
+                    (
+                        "I couldn't verify the restaurant for that order, "
+                        "so your cart was not changed."
+                    ),
+                    tool_call_id,
+                )
+
+            if (
+                historical_subdomain != subdomain
+                or historical_restaurant != restaurant_name
+            ):
+                return _failure(
+                    (
+                        "That order belongs to a different restaurant. "
+                        "Switch to that restaurant before reordering; "
+                        "your cart was not changed."
+                    ),
+                    tool_call_id,
+                )
 
             historical_items = _extract_items(historical_result)
 
@@ -180,8 +234,13 @@ def reorder_previous_order(
                     tool_call_id,
                 )
 
+            tenant_context = {
+                **lookup_context,
+                "restaurant_name": historical_restaurant,
+                "subdomain": historical_subdomain,
+            }
             validation_context = {
-                **context,
+                **tenant_context,
                 "items": historical_items,
                 "reorder_items": historical_items,
             }
@@ -201,7 +260,7 @@ def reorder_previous_order(
                 )
 
             add_context = {
-                **context,
+                **tenant_context,
                 "items": validated_items,
                 "validated_items": validated_items,
                 "reorder_items": validated_items,
@@ -215,8 +274,8 @@ def reorder_previous_order(
             cart = load_langgraph_cart(
                 db,
                 user_id=user_id,
-                restaurant_name=restaurant_name,
-                subdomain=subdomain,
+                restaurant_name=historical_restaurant,
+                subdomain=historical_subdomain,
             )
 
     except LookupError:

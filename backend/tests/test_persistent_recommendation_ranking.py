@@ -137,6 +137,7 @@ def test_persistent_context_does_not_override_dietary_filter():
             "title": "Paneer Biryani",
             "base_price": 240,
             "description": "vegetarian paneer biryani",
+            "dietary": ["vegetarian"],
         },
     ]
 

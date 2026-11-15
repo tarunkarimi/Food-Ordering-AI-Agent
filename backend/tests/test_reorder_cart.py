@@ -78,7 +78,7 @@ def test_reorder_populates_persistent_cart_with_current_price(monkeypatch):
     )
 
     monkeypatch.setattr(
-        "src.services.reorder._fetch_menu_items",
+        "src.services.reorder._fetch_menu_items_for_tenant",
         lambda payload: (
             [
                 {
@@ -133,7 +133,7 @@ def test_reorder_populates_persistent_cart_with_current_price(monkeypatch):
         db.close()
 
 
-def test_reorder_adds_quantity_to_existing_cart_item(monkeypatch):
+def test_reorder_retry_is_idempotent_for_existing_cart_item(monkeypatch):
     user_id, token = signup_and_login()
 
     order_id = unique_order_id()
@@ -153,7 +153,7 @@ def test_reorder_adds_quantity_to_existing_cart_item(monkeypatch):
     )
 
     monkeypatch.setattr(
-        "src.services.reorder._fetch_menu_items",
+        "src.services.reorder._fetch_menu_items_for_tenant",
         lambda payload: (
             [
                 {
@@ -181,7 +181,7 @@ def test_reorder_adds_quantity_to_existing_cart_item(monkeypatch):
     )
 
     assert second.status_code == 200
-    assert second.json()["cart"]["items"][0]["quantity"] == 4
+    assert second.json()["cart"]["items"][0]["quantity"] == 2
 
     db = SessionLocal()
 
@@ -190,7 +190,7 @@ def test_reorder_adds_quantity_to_existing_cart_item(monkeypatch):
 
         assert cart is not None
         assert len(cart.items) == 1
-        assert cart.items[0].quantity == 4
+        assert cart.items[0].quantity == 2
     finally:
         db.close()
 
@@ -256,7 +256,7 @@ def test_reorder_rejects_switching_from_nonempty_other_restaurant_cart(
         db.close()
 
     monkeypatch.setattr(
-        "src.services.reorder._fetch_menu_items",
+        "src.services.reorder._fetch_menu_items_for_tenant",
         lambda payload: (
             [
                 {
@@ -311,7 +311,7 @@ def test_reorder_does_not_checkout(monkeypatch):
     )
 
     monkeypatch.setattr(
-        "src.services.reorder._fetch_menu_items",
+        "src.services.reorder._fetch_menu_items_for_tenant",
         lambda payload: (
             [
                 {

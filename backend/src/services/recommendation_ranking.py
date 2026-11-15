@@ -1,6 +1,9 @@
 ﻿"""Advanced recommendation constraints and ranking."""
 
 import re
+from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
+from math import isfinite
 from typing import Any
 
 
@@ -8,6 +11,171 @@ def _normalize(value: object) -> str:
     if value is None:
         return ""
     return str(value).strip().lower()
+
+
+def _is_available(item: dict[str, Any]) -> bool:
+    """Validate availability metadata when supplied by the current menu.
+
+    The menu API contract returns only current catalog entries and the order
+    endpoint accepts listed entries. Thus an omitted flag means listed in the
+    current orderable catalog; malformed explicit metadata is unverifiable.
+    """
+    for field in ("available", "is_available", "is_active"):
+        if field in item:
+            if not isinstance(item[field], bool) or item[field] is False:
+                return False
+    status = _normalize(item.get("status"))
+    if "status" in item:
+        if not isinstance(item.get("status"), str) or status not in {
+            "available", "active", "in stock", "in_stock",
+        }:
+            return False
+    return status not in {
+        "unavailable", "inactive", "discontinued", "sold_out", "sold out",
+        "out of stock",
+    }
+
+
+def _recency_points(value: object, *, now: datetime | None = None) -> int:
+    if not isinstance(value, datetime):
+        return 0
+    current = now or datetime.now(timezone.utc)
+    timestamp = value
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    age_days = max(
+        0,
+        (
+            current.astimezone(timezone.utc)
+            - timestamp.astimezone(timezone.utc)
+        ).days,
+    )
+    if age_days <= 7:
+        return 6
+    if age_days <= 30:
+        return 4
+    if age_days <= 90:
+        return 2
+    return 0
+
+
+def extract_budget(messages: list[Any]) -> float | None:
+    """Read the newest explicit monetary cap from conversational messages."""
+    patterns = (
+        re.compile(
+            r"\b(?:under|below|within|up\s+to|at\s+most|no\s+more\s+than|"
+            r"max(?:imum)?(?:\s+of)?|budget(?:\s+(?:is|of))?)\s*"
+            r"(?:₹|rs\.?|inr|\?)?\s*(\d+(?:\.\d{1,2})?)\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\b(?:₹|rs\.?|inr)\s*(\d+(?:\.\d{1,2})?)\s*(?:budget|total)\b",
+            re.IGNORECASE,
+        ),
+    )
+    for message in reversed(messages or []):
+        content = getattr(message, "content", "")
+        if not isinstance(content, str):
+            continue
+        matches = [pattern.search(content) for pattern in patterns]
+        match = next((entry for entry in matches if entry), None)
+        if match:
+            try:
+                amount = float(match.group(1))
+            except (TypeError, ValueError):
+                continue
+            if amount >= 0:
+                return amount
+    return None
+
+
+def build_budget_combinations(
+    recommendations: list[dict[str, Any]],
+    budget: float | int | str | None,
+    *,
+    limit: int = 3,
+) -> list[dict[str, Any]]:
+    """Build distinct two-item sets priced only from the current menu."""
+    if budget is None:
+        return []
+    try:
+        cap = Decimal(str(budget))
+    except (InvalidOperation, ValueError):
+        return []
+    if not cap.is_finite() or cap < 0:
+        return []
+
+    valid: list[tuple[dict[str, Any], Decimal]] = []
+    seen: set[str] = set()
+    seen_titles: set[str] = set()
+    for item in recommendations:
+        title = str(item.get("title") or "").strip()
+        identity = str(item.get("item_id") or title).strip().lower()
+        normalized_title = title.casefold()
+        try:
+            price = Decimal(str(item.get("current_price")))
+        except (InvalidOperation, ValueError):
+            continue
+        if (
+            not title
+            or not identity
+            or identity in seen
+            or normalized_title in seen_titles
+            or not price.is_finite()
+            or price < 0
+            or price > cap
+        ):
+            continue
+        seen.add(identity)
+        seen_titles.add(normalized_title)
+        valid.append((item, price))
+
+    combinations: list[dict[str, Any]] = []
+    for index, (first, first_price) in enumerate(valid):
+        for second, second_price in valid[index + 1:]:
+            if (
+                str(first.get("title", "")).strip().casefold()
+                == str(second.get("title", "")).strip().casefold()
+            ):
+                continue
+            total = first_price + second_price
+            if total > cap:
+                continue
+            items = []
+            for recommendation, price in (
+                (first, first_price),
+                (second, second_price),
+            ):
+                items.append(
+                    {
+                        "item_id": recommendation.get("item_id"),
+                        "title": recommendation["title"],
+                        "quantity": 1,
+                        "unit_price": float(price),
+                    }
+                )
+            combinations.append(
+                {
+                    "items": items,
+                    "estimated_total": float(total),
+                    "score": int(first.get("score", 0))
+                    + int(second.get("score", 0)),
+                    "pricing_note": (
+                        "Estimated from current menu prices; excludes taxes, "
+                        "delivery, discounts, and checkout changes."
+                    ),
+                }
+            )
+    combinations.sort(
+        key=lambda combo: (
+            -combo["score"],
+            combo["estimated_total"],
+            tuple(item["title"].casefold() for item in combo["items"]),
+        )
+    )
+    return combinations[: max(0, limit)]
 
 
 def memory_preference_signal(
@@ -30,6 +198,7 @@ def memory_preference_signal(
         and bool(ingredient_values)
     )
     positive_matches = 0
+    restriction_unknown = False
 
     for memory in memories:
         if isinstance(memory, dict):
@@ -53,24 +222,92 @@ def memory_preference_signal(
             for variant in variants
             if variant
         )
-        if not matches:
-            if polarity == "dislike" and not complete_ingredients:
-                # Menu text is not a complete ingredient declaration. When
-                # the menu cannot establish safety, honor the explicit
-                # restriction conservatively instead of assuming a match is
-                # absent because it was omitted from the description.
-                return True, 0, []
-            continue
-
         if polarity == "dislike":
-            return True, 0, []
-        if polarity == "like":
+            if matches:
+                return True, 0, []
+            if not complete_ingredients:
+                # Missing/incomplete ingredient data is unknown, never a
+                # verified safe non-match. Exclude conservatively.
+                restriction_unknown = True
+            continue
+        if polarity == "like" and matches:
             positive_matches += 1
+
+    if restriction_unknown:
+        return True, 0, []
 
     if not positive_matches:
         return False, 0, []
 
     return False, min(positive_matches, 2) * 6, ["matches a food you like"]
+
+
+def has_unknown_memory_restriction(
+    item: dict[str, Any], memories: list[Any] | None,
+) -> bool:
+    """Identify candidates omitted because restriction safety is unknown."""
+    if not memories:
+        return False
+    text = _text(item)
+    ingredients = _ingredient_values(item.get("ingredients"))
+    complete = item.get("ingredients_complete") is True and bool(ingredients)
+    for memory in memories:
+        if isinstance(memory, dict):
+            value, polarity = memory.get("memory_value"), memory.get("polarity")
+        else:
+            value = getattr(memory, "memory_value", None)
+            polarity = getattr(memory, "polarity", None)
+        if polarity != "dislike" or not _normalize(value):
+            continue
+        phrase = _normalize(value)
+        variants = [phrase]
+        if phrase.endswith(" food"):
+            variants.append(phrase[:-5].strip())
+        if any(
+            _contains_phrase(variant, text)
+            or any(_contains_phrase(variant, ingredient) for ingredient in ingredients)
+            for variant in variants if variant
+        ):
+            continue
+        if not complete:
+            return True
+    return False
+
+
+def has_unknown_dietary_evidence(
+    item: dict[str, Any], dietary_preference: str | None,
+) -> bool:
+    """Return true when an explicit dietary request cannot be verified."""
+    preference = _normalize(dietary_preference)
+    is_vegan = "vegan" in preference
+    is_vegetarian = "vegetarian" in preference or preference in {"veg", "vegetarian"}
+    if not (is_vegan or is_vegetarian):
+        return False
+    labels = _dietary_labels(item)
+    normalized = {re.sub(r"[-_]+", " ", label).strip() for label in labels}
+    if any(
+        _contains_phrase(term, label)
+        for term in _VEGAN_CONTRARY_LABELS
+        for label in normalized
+    ):
+        return False  # Known violation, rather than missing evidence.
+    if is_vegan:
+        evidence = " ".join((_text(item), *_ingredient_values(item.get("ingredients"))))
+        if _contains_animal_derived_ingredient(evidence):
+            return False  # Known violation.
+        ingredients = _ingredient_values(item.get("ingredients"))
+        complete = item.get("ingredients_complete") is True and bool(ingredients)
+        return "vegan" not in labels and not complete
+    evidence = " ".join((_text(item), *_ingredient_values(item.get("ingredients"))))
+    vegetarian_forbidden = (
+        "chicken", "mutton", "lamb", "fish", "prawn", "shrimp",
+        "seafood", "egg", "beef", "pork", "turkey", "duck",
+    )
+    if any(_contains_phrase(term, evidence) for term in vegetarian_forbidden):
+        return False  # Known violation under this application's definition.
+    ingredients = _ingredient_values(item.get("ingredients"))
+    complete = item.get("ingredients_complete") is True and bool(ingredients)
+    return not ({"vegetarian", "vegan"} & labels) and not complete
 
 
 def _text(item: dict[str, Any]) -> str:
@@ -237,18 +474,30 @@ def matches_dietary_preference(
         )
         if any(_contains_phrase(term, evidence) for term in forbidden):
             return False
-        if "non-vegetarian" in labels or "non vegetarian" in labels:
+        normalized_labels = {
+            re.sub(r"[-_]+", " ", label).strip() for label in labels
+        }
+        if any(
+            _contains_phrase(term, label)
+            for term in _VEGAN_CONTRARY_LABELS
+            for label in normalized_labels
+        ):
             return False
+        if {"vegetarian", "vegan"} & labels:
+            return True
+        return bool(item.get("ingredients_complete") is True and ingredients)
     return True
 
 
 def _price(item: dict[str, Any]) -> float | None:
+    if isinstance(item.get("base_price"), bool):
+        return None
     try:
         value = float(item.get("base_price"))
     except (TypeError, ValueError):
         return None
 
-    if value < 0:
+    if not isfinite(value) or value < 0:
         return None
 
     return value
@@ -291,6 +540,7 @@ def _persistent_item_signal(
     item: dict[str, Any],
     persistent_context: dict[str, Any] | None,
     current_restaurant: str | None,
+    reference_time: datetime | None = None,
 ) -> tuple[int, list[str]]:
     """Score lifetime ordering affinity from persistent intelligence."""
 
@@ -355,12 +605,19 @@ def _persistent_item_signal(
 
         # Quantity provides an additional, smaller signal.
         score += min(total_quantity, 5)
+        recency = _recency_points(
+            favorite.get("last_ordered_at"),
+            now=reference_time,
+        )
+        score += recency
 
         if restaurant and favorite_restaurant == restaurant:
             score += 5
             reasons.append("one of your frequently ordered items here")
         else:
             reasons.append("one of your frequently ordered items")
+        if recency:
+            reasons.append("ordered recently")
 
         return score, reasons
 
@@ -426,6 +683,8 @@ def _score(
     persistent_context: dict[str, Any] | None = None,
     current_restaurant: str | None = None,
     ai_memories: list[Any] | None = None,
+    history_signals: dict[str, dict[str, Any]] | None = None,
+    reference_time: datetime | None = None,
 ) -> tuple[int, list[str]]:
     text = _text(item)
     title = _normalize(item.get("title"))
@@ -461,14 +720,34 @@ def _score(
     history_count = history_counts.get(title, 0)
 
     if history_count:
-        score += min(history_count * 3, 9)
-        reasons.append("similar to what you ordered before")
+        detail = (history_signals or {}).get(title, {})
+        try:
+            detail_count = int(detail.get("order_count", history_count) or 0)
+            quantity = int(detail.get("total_quantity", 0) or 0)
+        except (TypeError, ValueError):
+            detail_count = history_count
+            quantity = 0
+        count = max(history_count, detail_count)
+        score += min(count * 3, 12)
+        score += min(max(quantity, 0), 3)
+        recency = _recency_points(
+            detail.get("last_ordered_at"),
+            now=reference_time,
+        )
+        score += recency
+        if count >= 2:
+            reasons.append("frequently ordered favorite")
+        else:
+            reasons.append("previously ordered")
+        if recency:
+            reasons.append("ordered recently")
 
     persistent_item_score, persistent_item_reasons = (
         _persistent_item_signal(
             item,
             persistent_context,
             current_restaurant,
+            reference_time,
         )
     )
 
@@ -501,6 +780,8 @@ def rank_recommendations(
     max_price: float | None = None,
     limit: int = 5,
     ai_memories: list[Any] | None = None,
+    history_signals: dict[str, dict[str, Any]] | None = None,
+    reference_time: datetime | None = None,
 ) -> list[dict[str, Any]]:
     """Rank only currently purchasable menu items.
 
@@ -511,6 +792,8 @@ def rank_recommendations(
     history_counts = history_counts or {}
 
     candidates: list[dict[str, Any]] = []
+    seen_items: set[str] = set()
+    seen_titles: set[str] = set()
 
     for item in menu_items:
         if not isinstance(item, dict):
@@ -519,6 +802,15 @@ def rank_recommendations(
         title = str(item.get("title") or "").strip()
 
         if not title:
+            continue
+
+        identity = str(item.get("id") or title).strip().casefold()
+        normalized_title = title.casefold()
+        if (
+            identity in seen_items
+            or normalized_title in seen_titles
+            or not _is_available(item)
+        ):
             continue
 
         price = _price(item)
@@ -554,6 +846,8 @@ def rank_recommendations(
             persistent_context=persistent_context,
             current_restaurant=current_restaurant,
             ai_memories=ai_memories,
+            history_signals=history_signals,
+            reference_time=reference_time,
         )
 
         candidates.append(
@@ -565,6 +859,8 @@ def rank_recommendations(
                 "reasons": reasons,
             }
         )
+        seen_items.add(identity)
+        seen_titles.add(normalized_title)
 
     candidates.sort(
         key=lambda entry: (

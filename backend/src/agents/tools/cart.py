@@ -19,12 +19,15 @@ def _menu_url(subdomain: str) -> str:
     return f"{config.MENU_BACKEND_URL.rstrip('/')}/?subdomain={subdomain}"
 
 
-def _fetch_menu_items(state: OrderState) -> tuple[list[dict], str | None]:
-    """Fetch and minimally validate the authoritative tenant menu."""
+def _fetch_menu_response(subdomain: str) -> tuple[dict | None, str | None]:
+    """Fetch a menu only when its envelope confirms the requested tenant."""
+    if not isinstance(subdomain, str) or not subdomain.strip():
+        return None, "A valid restaurant identity is required to load the menu."
+    requested = subdomain.strip()
     try:
         response = request_read_with_retry(
             lambda: requests.get(
-                _menu_url(state["subdomain"]),
+                _menu_url(requested),
                 timeout=config.DOWNSTREAM_REQUEST_TIMEOUT_SECONDS,
             )
         )
@@ -34,24 +37,49 @@ def _fetch_menu_items(state: OrderState) -> tuple[list[dict], str | None]:
         if not isinstance(menu, dict) or not isinstance(menu.get("items"), list):
             raise ValueError("Menu response is malformed")
 
+        returned = menu.get("subdomain")
+        if not isinstance(returned, str) or not returned.strip():
+            return None, "The menu service returned an invalid restaurant identity."
+        if returned != requested:
+            return None, "The menu service returned a different restaurant menu."
+
         items = menu["items"]
 
         if not all(isinstance(item, dict) for item in items):
             raise ValueError("Menu response is malformed")
 
-        return items, None
+        return menu, None
 
     except requests.Timeout:
-        return [], "The menu service timed out. Please try again."
+        return None, "The menu service timed out. Please try again."
 
     except requests.ConnectionError:
-        return [], "The menu service is unavailable. Please try again."
+        return None, "The menu service is unavailable. Please try again."
 
     except requests.RequestException:
-        return [], "The menu service returned an error. Please try again."
+        return None, "The menu service returned an error. Please try again."
 
     except (ValueError, TypeError, AttributeError):
-        return [], "The menu service returned an invalid response. Please try again."
+        return None, "The menu service returned an invalid response. Please try again."
+
+
+def _fetch_menu_items(state: OrderState) -> tuple[list[dict], str | None]:
+    """Fetch the current menu items for the restaurant in agent state."""
+    tenant = state.get("subdomain") if isinstance(state, dict) else None
+    menu, error = _fetch_menu_response(tenant)
+    if error:
+        return [], error
+    return menu["items"], None
+
+
+def _fetch_menu_items_for_tenant(
+    subdomain: str,
+) -> tuple[list[dict], str | None]:
+    """Fetch menu items only when the response confirms the requested tenant."""
+    menu, error = _fetch_menu_response(subdomain)
+    if error:
+        return [], error
+    return menu["items"], None
 
 
 def _failure(message: str, tool_call_id: str) -> Command:

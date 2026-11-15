@@ -54,12 +54,17 @@ def list_order_history(
     user_id: int,
     limit: int = 50,
     offset: int = 0,
+    subdomain: str | None = None,
+    restaurant_name: str | None = None,
 ) -> list[OrderHistory]:
+    query = select(OrderHistory).where(OrderHistory.user_id == user_id)
+    if subdomain and subdomain.strip():
+        query = query.where(OrderHistory.subdomain == subdomain.strip())
+    if restaurant_name and restaurant_name.strip():
+        query = query.where(OrderHistory.restaurant_name == restaurant_name.strip())
     return list(
         db.scalars(
-            select(OrderHistory)
-            .where(OrderHistory.user_id == user_id)
-            .order_by(
+            query.order_by(
                 OrderHistory.created_at.desc(),
                 OrderHistory.id.desc(),
             )
@@ -67,6 +72,36 @@ def list_order_history(
             .offset(offset)
         )
     )
+
+
+def resolve_unique_order_subdomain(
+    db: Session,
+    *,
+    user_id: int | str,
+) -> str | None:
+    """Resolve a tenant only when this user's history has exactly one.
+
+    Restaurant display names are deliberately not used as tenant identity.
+    Null, blank, or multiple subdomains fail closed.
+    """
+    values = db.scalars(
+        select(OrderHistory.subdomain)
+        .where(
+            OrderHistory.user_id == user_id,
+            OrderHistory.subdomain.is_not(None),
+            OrderHistory.subdomain != "",
+        )
+        .distinct()
+        .limit(2)
+    ).all()
+    if (
+        len(values) != 1
+        or not isinstance(values[0], str)
+        or not values[0].strip()
+        or values[0] != values[0].strip()
+    ):
+        return None
+    return values[0]
 
 
 def get_order_history(

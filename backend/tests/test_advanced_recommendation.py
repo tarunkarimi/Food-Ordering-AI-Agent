@@ -1,9 +1,14 @@
 """Tests for advanced recommendation AI tool."""
 
 from unittest.mock import patch
+import pytest
 
+from src.agents.tools import cart as cart_tools
 from src.agents.tools.advanced_recommendation import (
     advanced_recommend_food,
+)
+from src.agents.tools.recommendations import (
+    get_personalized_recommendations,
 )
 
 
@@ -53,6 +58,8 @@ def test_advanced_recommendation_uses_budget_and_current_menu():
         "Order",
         (),
         {
+            "restaurant_name": "Test Restaurant",
+            "subdomain": "test",
             "items_json": '[{"title":"Dosa","quantity":2}]',
         },
     )()
@@ -88,10 +95,6 @@ def test_advanced_recommendation_uses_budget_and_current_menu():
         patch(
             "src.agents.tools.advanced_recommendation.list_order_history",
             return_value=[order],
-        ),
-        patch(
-            "src.agents.tools.advanced_recommendation.build_persistent_ai_ordering_context",
-            return_value={},
         ),
         patch(
             "src.agents.tools.advanced_recommendation.rank_recommendations",
@@ -168,10 +171,6 @@ def test_advanced_recommendation_does_not_mutate_cart():
             return_value=[],
         ),
         patch(
-            "src.agents.tools.advanced_recommendation.build_persistent_ai_ordering_context",
-            return_value={},
-        ),
-        patch(
             "src.agents.tools.advanced_recommendation.rank_recommendations",
             return_value=[
                 {
@@ -189,4 +188,77 @@ def test_advanced_recommendation_does_not_mutate_cart():
         )
 
     assert result["recommendations"]
+    assert state["cart"] == {"items": []}
+
+
+@pytest.mark.parametrize(
+    "caller",
+    ["standard", "advanced"],
+)
+@pytest.mark.parametrize(
+    ("menu", "reason"),
+    [
+        ({"items": []}, "invalid restaurant identity"),
+        ({"subdomain": "  ", "items": []}, "invalid restaurant identity"),
+        ({"subdomain": "tenant-b", "items": []}, "different restaurant"),
+        ({"subdomain": "tenant-a", "items": "malformed"}, "invalid response"),
+    ],
+    ids=["missing", "blank", "mismatch", "malformed"],
+)
+def test_recommendation_tools_stop_when_menu_tenant_is_unverified(
+    monkeypatch, caller, menu, reason,
+):
+    requested_urls = []
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return menu
+
+    monkeypatch.setattr(
+        cart_tools,
+        "request_read_with_retry",
+        lambda request: request(),
+    )
+    monkeypatch.setattr(
+        cart_tools.requests,
+        "get",
+        lambda url, timeout: requested_urls.append(url) or Response(),
+    )
+    monkeypatch.setattr(
+        "src.agents.tools.recommendations.SessionLocal",
+        lambda: pytest.fail("standard ranking must not run"),
+    )
+    monkeypatch.setattr(
+        "src.agents.tools.recommendations.get_personalized_recommendations",
+        lambda *args, **kwargs: pytest.fail("standard ranking must not run"),
+    )
+    monkeypatch.setattr(
+        "src.agents.tools.advanced_recommendation.SessionLocal",
+        lambda: pytest.fail("advanced ranking must not run"),
+    )
+    monkeypatch.setattr(
+        "src.agents.tools.advanced_recommendation.rank_recommendations",
+        lambda *args, **kwargs: pytest.fail("advanced ranking must not run"),
+    )
+    state = {
+        "user_id": 41,
+        "restaurant_name": "Shared Kitchen",
+        "subdomain": "tenant-a",
+        "messages": [],
+        "cart": {"items": []},
+    }
+
+    tool = (
+        get_personalized_recommendations
+        if caller == "standard"
+        else advanced_recommend_food
+    )
+    result = tool.invoke({"state": state})
+
+    assert "?subdomain=tenant-a" in requested_urls[0]
+    assert reason in result["message"].lower()
+    assert "recommendations" not in result
     assert state["cart"] == {"items": []}

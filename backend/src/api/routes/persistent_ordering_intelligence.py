@@ -13,6 +13,7 @@ router = APIRouter()
 @router.get("")
 def persistent_ordering_intelligence(
     restaurant_name: str | None = Query(default=None),
+    subdomain: str | None = Query(default=None),
     session=Depends(get_current_session),
 ):
     with SessionLocal() as db:
@@ -20,12 +21,14 @@ def persistent_ordering_intelligence(
             db,
             user_id=session.user.id,
             restaurant_name=restaurant_name,
+            subdomain=subdomain,
         )
 
 
 @router.get("/ai-context")
 def persistent_ai_ordering_context(
     restaurant_name: str | None = Query(default=None),
+    subdomain: str | None = Query(default=None),
     session=Depends(get_current_session),
 ):
     with SessionLocal() as db:
@@ -33,4 +36,5 @@ def persistent_ai_ordering_context(
             db,
             user_id=session.user.id,
             restaurant_name=restaurant_name,
+            subdomain=subdomain,
         )

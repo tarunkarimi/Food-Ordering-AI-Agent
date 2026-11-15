@@ -76,7 +76,29 @@ jobs:
         run: uv run pytest tests/test_ai_memory_integration.py tests/test_ai_memory_persistence_regressions.py -q
 
       - name: Run personalized recommendation tests
-        run: uv run pytest tests/test_recommendations.py tests/test_recommendation_ranking.py tests/test_advanced_recommendation.py -q
+        run: >-
+          uv run pytest tests/test_recommendations.py
+          tests/test_recommendation_ranking.py
+          tests/test_advanced_recommendation.py
+          tests/test_ordering_intelligence_unit.py
+          tests/test_reorder_suggestion_route_unit.py
+          tests/test_cart_tools.py
+          tests/test_chat_agent_service.py
+          tests/test_persistent_ordering_ai_context.py
+          tests/test_persistent_ordering_profile_unit.py
+          tests/test_reorder_safety_unit.py
+          tests/test_reorder_agent_tool.py
+          tests/test_personalization_prompt.py -q
+      - name: Run database safety tests
+        run: uv run pytest tests/test_db_test_safety.py -q
+
+      - name: Run ordering intelligence and reorder persistence tests
+        run: >-
+          uv run pytest tests/test_ordering_intelligence.py
+          tests/test_persistent_ordering_intelligence.py
+          tests/test_reorder_service.py
+          tests/test_reorder_api.py
+          tests/test_reorder_cart.py -q
 
       - name: Run observability tests
         run: uv run pytest tests/test_agent_observability.py -q

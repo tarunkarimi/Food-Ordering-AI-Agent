@@ -1,6 +1,7 @@
 """Tests for context-aware recommendation services."""
 
 import json
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -21,6 +22,8 @@ def _prefs(**kwargs):
 
 def _order(items):
     return SimpleNamespace(
+        restaurant_name="Sample Kitchen",
+        subdomain="sample",
         items_json=json.dumps(items),
     )
 
@@ -54,7 +57,7 @@ def test_preferences_and_history_rank_current_menu(
     monkeypatch.setattr(
         recommendations,
         "list_order_history",
-        lambda db, user_id, limit, offset: [
+        lambda db, user_id, limit, offset, **kwargs: [
             _order([{"title": "Spicy Dosa", "quantity": 2}]),
             _order([{"title": "Spicy Dosa", "quantity": 1}]),
         ],
@@ -79,6 +82,7 @@ def test_preferences_and_history_rank_current_menu(
         object(),
         user_id=1,
         menu_items=menu,
+        subdomain="sample",
     )
 
     assert result["recommendations"][0]["title"] == "Spicy Dosa"
@@ -115,6 +119,7 @@ def test_vegetarian_preference_filters_obvious_non_vegetarian_items(
             "title": "Vegetable Biryani",
             "base_price": 220,
             "description": "Vegetarian rice dish",
+            "dietary": ["vegetarian"],
         },
     ]
 
@@ -146,7 +151,7 @@ def test_historical_prices_are_not_returned(
     monkeypatch.setattr(
         recommendations,
         "list_order_history",
-        lambda db, user_id, limit, offset: [
+        lambda db, user_id, limit, offset, **kwargs: [
             _order(
                 [
                     {
@@ -250,6 +255,7 @@ def test_conversational_memories_rank_likes_and_exclude_dislikes(
                 "description": "chargrilled chicken",
                 "ingredients": ["chicken", "chili", "yogurt"],
                 "ingredients_complete": True,
+                "dietary": ["non-vegetarian"],
                 "base_price": 240,
             },
             {
@@ -264,6 +270,7 @@ def test_conversational_memories_rank_likes_and_exclude_dislikes(
                 "description": "mild rice",
                 "ingredients": ["rice", "vegetables"],
                 "ingredients_complete": True,
+                "dietary": ["vegetarian"],
                 "base_price": 130,
             },
         ],
@@ -319,3 +326,248 @@ def test_personalized_service_enforces_vegan_menu_evidence(monkeypatch):
     assert [item["title"] for item in result["recommendations"]] == [
         "Chickpea Bowl"
     ]
+
+
+def test_history_frequency_and_recency_influence_ranking(monkeypatch):
+    from src.services import recommendations
+
+    monkeypatch.setattr(
+        recommendations,
+        "get_user_preferences",
+        lambda db, user_id: _prefs(cuisine_preference="Indian"),
+    )
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(
+        recommendations,
+        "list_order_history",
+        lambda db, user_id, limit, offset, **kwargs: [
+            SimpleNamespace(
+                status="confirmed",
+                restaurant_name="Sample Kitchen",
+                subdomain="sample",
+                created_at=now - timedelta(days=1),
+                items_json=json.dumps([
+                    {"title": "Recent Indian Curry", "quantity": 2},
+                    {"title": "Recent Indian Curry", "quantity": 1},
+                ]),
+            ),
+            SimpleNamespace(
+                status="confirmed",
+                restaurant_name="Sample Kitchen",
+                subdomain="sample",
+                created_at=now - timedelta(days=2),
+                items_json=json.dumps([
+                    {"title": "Recent Indian Curry", "quantity": 1},
+                ]),
+            ),
+            SimpleNamespace(
+                status="cancelled",
+                restaurant_name="Sample Kitchen",
+                subdomain="sample",
+                created_at=now,
+                items_json=json.dumps([
+                    {"title": "Cancelled Favorite", "quantity": 5},
+                ]),
+            ),
+            SimpleNamespace(
+                status="confirmed",
+                restaurant_name="Sample Kitchen",
+                subdomain="sample",
+                created_at=now - timedelta(days=120),
+                items_json=json.dumps([
+                    {"title": "Old Indian Curry", "quantity": 1},
+                    {"title": "Old Indian Curry", "quantity": 1},
+                ]),
+            ),
+        ],
+    )
+
+    result = get_personalized_recommendations(
+        object(),
+        user_id=42,
+        menu_items=[
+            {"id": "recent", "title": "Recent Indian Curry", "base_price": 200},
+            {"id": "old", "title": "Old Indian Curry", "base_price": 200},
+            {"id": "cancelled", "title": "Cancelled Favorite", "base_price": 100},
+        ],
+        subdomain="sample",
+    )
+
+    assert result["recommendations"][0]["title"] == "Recent Indian Curry"
+    assert "frequently ordered favorite" in result["recommendations"][0]["reasons"]
+    assert "ordered recently" in result["recommendations"][0]["reasons"]
+    cancelled_candidate = next(
+        item
+        for item in result["recommendations"]
+        if item["title"] == "Cancelled Favorite"
+    )
+    assert not any("ordered" in reason for reason in cancelled_candidate["reasons"])
+
+
+def test_service_scopes_preferences_memories_and_history_to_authenticated_user(
+    monkeypatch,
+):
+    from src.services import recommendations
+
+    observed = []
+    monkeypatch.setattr(
+        recommendations,
+        "get_user_preferences",
+        lambda db, user_id: observed.append(("preferences", user_id)) or None,
+    )
+    monkeypatch.setattr(
+        recommendations,
+        "list_user_memories",
+        lambda db, user_id: observed.append(("memories", user_id)) or [],
+    )
+    monkeypatch.setattr(
+        recommendations,
+        "list_order_history",
+        lambda db, user_id, limit, offset: observed.append(("history", user_id)) or [],
+    )
+
+    get_personalized_recommendations(
+        object(), user_id=808, menu_items=[]
+    )
+
+    assert observed == [
+        ("preferences", 808),
+        ("memories", 808),
+        ("history", 808),
+    ]
+
+
+def test_unknown_dislike_metadata_returns_empty_limited_result(monkeypatch):
+    from src.services import recommendations
+
+    monkeypatch.setattr(recommendations, "get_user_preferences", lambda db, user_id: None)
+    monkeypatch.setattr(recommendations, "list_order_history", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        recommendations,
+        "list_user_memories",
+        lambda db, user_id: [
+            {"memory_value": "paneer", "polarity": "dislike"},
+        ],
+    )
+    result = get_personalized_recommendations(
+        object(), user_id=42,
+        menu_items=[{"id": "meal", "title": "House Special", "base_price": 100}],
+    )
+    assert result["recommendations"] == []
+    assert result["recommendations_limited"] is True
+    assert "could not be verified" in result["safety_notice"]
+
+
+def test_verified_nonmatch_and_multiple_dislikes_are_handled(monkeypatch):
+    from src.services import recommendations
+
+    monkeypatch.setattr(recommendations, "get_user_preferences", lambda db, user_id: None)
+    monkeypatch.setattr(recommendations, "list_order_history", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        recommendations,
+        "list_user_memories",
+        lambda db, user_id: [
+            {"memory_value": "paneer", "polarity": "dislike"},
+            {"memory_value": "peanut", "polarity": "dislike"},
+        ],
+    )
+    result = get_personalized_recommendations(
+        object(), user_id=42,
+        menu_items=[
+            {
+                "id": "safe", "title": "Vegetable Bowl", "base_price": 100,
+                "ingredients": ["rice", "vegetables"], "ingredients_complete": True,
+            },
+            {
+                "id": "known", "title": "Paneer Bowl", "base_price": 110,
+                "ingredients": ["paneer", "rice"], "ingredients_complete": True,
+            },
+        ],
+    )
+    assert [item["title"] for item in result["recommendations"]] == ["Vegetable Bowl"]
+
+
+def test_positive_memory_cannot_override_negative_restriction(monkeypatch):
+    from src.services import recommendations
+
+    monkeypatch.setattr(recommendations, "get_user_preferences", lambda db, user_id: None)
+    monkeypatch.setattr(recommendations, "list_order_history", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        recommendations,
+        "list_user_memories",
+        lambda db, user_id: [
+            {"memory_value": "paneer", "polarity": "like"},
+            {"memory_value": "paneer", "polarity": "dislike"},
+        ],
+    )
+    result = get_personalized_recommendations(
+        object(), user_id=42,
+        menu_items=[{
+            "id": "paneer", "title": "Paneer Curry", "base_price": 100,
+            "ingredients": ["paneer", "tomato"], "ingredients_complete": True,
+        }],
+    )
+    assert result["recommendations"] == []
+
+
+def test_history_signals_do_not_cross_restaurant_tenants(monkeypatch):
+    from src.services import recommendations
+
+    monkeypatch.setattr(recommendations, "get_user_preferences", lambda db, user_id: None)
+    monkeypatch.setattr(recommendations, "list_user_memories", lambda db, user_id: [])
+    monkeypatch.setattr(
+        recommendations,
+        "list_order_history",
+        lambda *args, **kwargs: [
+            SimpleNamespace(
+                restaurant_name="Shared Name", subdomain="tenant-a",
+                status="confirmed", created_at=datetime.now(timezone.utc),
+                items_json=json.dumps([{"title": "Same Dish"}]),
+            ),
+            SimpleNamespace(
+                restaurant_name="Shared Name", subdomain="tenant-b",
+                status="confirmed", created_at=datetime.now(timezone.utc),
+                items_json=json.dumps([{"title": "Same Dish"}] * 4),
+            ),
+        ],
+    )
+    result = get_personalized_recommendations(
+        object(), user_id=42,
+        menu_items=[{"id": "dish", "title": "Same Dish", "base_price": 100}],
+        restaurant_name="Shared Name", subdomain="tenant-a",
+    )
+    assert result["orders_analyzed"] == 1
+    assert "frequently ordered favorite" not in result["recommendations"][0]["reasons"]
+
+
+def test_service_applies_budget_and_returns_only_compliant_combinations(
+    monkeypatch,
+):
+    from src.services import recommendations
+
+    monkeypatch.setattr(
+        recommendations,
+        "get_user_preferences",
+        lambda db, user_id: _prefs(),
+    )
+    monkeypatch.setattr(
+        recommendations,
+        "list_order_history",
+        lambda db, user_id, limit, offset: [],
+    )
+    result = get_personalized_recommendations(
+        object(),
+        user_id=42,
+        menu_items=[
+            {"id": "main", "title": "Curry", "base_price": 240},
+            {"id": "side", "title": "Rice", "base_price": 100},
+            {"id": "drink", "title": "Lassi", "base_price": 80},
+            {"id": "too-high", "title": "Thali", "base_price": 500},
+        ],
+        max_price=350,
+    )
+
+    assert all(item["current_price"] <= 350 for item in result["recommendations"])
+    assert result["budget_applied"] == 350
+    assert result["budget_combinations"]
+    assert all(combo["estimated_total"] <= 350 for combo in result["budget_combinations"])

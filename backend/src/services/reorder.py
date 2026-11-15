@@ -6,8 +6,13 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.agents.tools.cart import _fetch_menu_items, _valid_price, _valid_quantity
+from src.agents.tools.cart import (
+    _fetch_menu_items_for_tenant,
+    _valid_price,
+    _valid_quantity,
+)
 from src.db.models import CartItem, OrderHistory
+from src.services.ordering_intelligence import is_menu_item_available
 from src.services.cart import get_or_create_cart
 
 
@@ -66,11 +71,7 @@ def validate_reorder_items(
     Historical prices are never trusted. Current menu prices are returned.
     """
 
-    menu_items, error = _fetch_menu_items(
-        {
-            "subdomain": subdomain,
-        }
-    )
+    menu_items, error = _fetch_menu_items_for_tenant(subdomain)
 
     if error:
         raise ConnectionError(error)
@@ -111,6 +112,10 @@ def validate_reorder_items(
         )
 
         if menu_item is None:
+            raise LookupError(
+                f"'{title}' is no longer available on the current menu."
+            )
+        if not is_menu_item_available(menu_item):
             raise LookupError(
                 f"'{title}' is no longer available on the current menu."
             )
@@ -252,7 +257,11 @@ def add_reorder_items_to_cart(
     subdomain: str,
     items: list[dict[str, Any]],
 ):
-    """Add validated reorder items to the user's persistent cart.
+    """Apply a previous order's validated quantities to the user's cart.
+
+    Reorder is idempotent for matching cart lines: repeating the same
+    reorder operation sets the line to the historical order quantity
+    instead of accumulating the quantity again.
 
     All items are validated before this function is called. Historical
     prices are therefore never written into the cart.
@@ -276,30 +285,34 @@ def add_reorder_items_to_cart(
         existing = existing_by_key.get(item_key)
 
         if existing is None:
-            db.add(
-                CartItem(
-                    cart=cart,
-                    item_key=item_key,
-                    item_id=item["item_id"],
-                    title=item["title"],
-                    quantity=item["quantity"],
-                    unit_price=item["unit_price"],
-                    variation_id=item["variation_id"],
-                    variation_name=item["variation_name"],
-                    variation_price=item["variation_price"],
-                )
+            new_item = CartItem(
+                cart=cart,
+                item_key=item_key,
+                item_id=item["item_id"],
+                title=item["title"],
+                quantity=item["quantity"],
+                unit_price=item["unit_price"],
+                variation_id=item["variation_id"],
+                variation_name=item["variation_name"],
+                variation_price=item["variation_price"],
             )
+            db.add(new_item)
+            existing_by_key[item_key] = new_item
             continue
 
-        existing.quantity += item["quantity"]
+        # Reorder must be idempotent. Repeating the same reorder request
+        # must not accumulate the historical quantity repeatedly.
+        existing.quantity = item["quantity"]
+        existing.item_id = item["item_id"]
         existing.title = item["title"]
         existing.unit_price = item["unit_price"]
+        existing.variation_id = item["variation_id"]
         existing.variation_name = item["variation_name"]
         existing.variation_price = item["variation_price"]
 
     db.commit()
 
-    return cart.__class__.query if False else _reload_cart(db, user_id)
+    return _reload_cart(db, user_id)
 
 
 def _reload_cart(db: Session, user_id: int):

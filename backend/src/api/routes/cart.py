@@ -21,9 +21,6 @@ from src.services.order_history import (
     update_order_history_status,
 )
 
-from src.services.persistent_ordering_intelligence import (
-    record_order_intelligence,
-)
 import requests
 
 
@@ -627,7 +624,7 @@ def checkout_authenticated_cart(
         for item in order_items
     )
 
-    order_history = create_order_history(
+    create_order_history(
         db,
         user_id=auth.user.id,
         order_id=order_id,
@@ -639,11 +636,6 @@ def checkout_authenticated_cart(
         items=order_items,
     )
 
-    record_order_intelligence(
-        db,
-        user_id=auth.user.id,
-        order=order_history,
-    )
     clear_cart(
         db,
         user_id=auth.user.id,

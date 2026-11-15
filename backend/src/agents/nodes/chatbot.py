@@ -129,6 +129,7 @@ def _load_persistent_ordering_context(
                 db,
                 user_id=user_id,
                 restaurant_name=state.get("restaurant_name"),
+                subdomain=state.get("subdomain"),
             )
     except Exception:
         logger.exception(

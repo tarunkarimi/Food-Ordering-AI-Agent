@@ -132,6 +132,49 @@ function decodeEscapedText(text) {
   }
 }
 
+const NO_VARIATION_ID = "no_variant";
+
+function canonicalVariationId(item, itemId) {
+  const variation = item?.variation;
+  const objectVariationId =
+    variation && typeof variation === "object"
+      ? variation.id
+      : undefined;
+  const explicitId =
+    objectVariationId !== undefined &&
+    objectVariationId !== null &&
+    String(objectVariationId).trim()
+      ? objectVariationId
+      : item?.variation_id;
+
+  if (typeof explicitId === "string" && explicitId.trim()) {
+    return explicitId.trim();
+  }
+  if (typeof explicitId === "number" && Number.isFinite(explicitId)) {
+    return String(explicitId);
+  }
+
+  const normalizedItemId = String(
+    itemId ?? item?.item_id ?? item?.id ?? "",
+  );
+  const itemKey = item?.key ?? item?.id;
+  const keyPrefix = normalizedItemId ? `${normalizedItemId}|` : "";
+
+  if (
+    keyPrefix &&
+    typeof itemKey === "string" &&
+    itemKey.startsWith(keyPrefix)
+  ) {
+    const keyVariationId = itemKey.slice(keyPrefix.length).trim();
+    if (keyVariationId) return keyVariationId;
+  }
+
+  if (typeof variation === "string" && variation.trim()) {
+    return variation.trim();
+  }
+
+  return NO_VARIATION_ID;
+}
 function App() {
   const [menu, setMenu] = useState([]);
   const [restaurant, setRestaurant] =
@@ -304,11 +347,26 @@ function App() {
       const syncedCart =
         backendCart.items.flatMap(
           (item) =>
-            (item.units || []).map(
-              (unit) => ({
-                id:
-                  unit.key ||
-                  item.item_id,
+            (item.units || []).map((unit) => {
+              const variationId = canonicalVariationId(
+                { key: unit.key, variation: unit.variation },
+                item.item_id,
+              );
+              const variation =
+                variationId === NO_VARIATION_ID
+                  ? null
+                  : unit.variation && typeof unit.variation === "object"
+                    ? { ...unit.variation, id: variationId }
+                    : {
+                        id: variationId,
+                        name:
+                          typeof unit.variation === "string"
+                            ? unit.variation
+                            : variationId,
+                      };
+
+              return {
+                id: unit.key || `${item.item_id}|${variationId}`,
                 item_id: item.item_id,
                 title: item.title,
                 quantity: Number(
@@ -317,10 +375,9 @@ function App() {
                 base_price: Number(
                   unit.base_price || 0
                 ),
-                variation:
-                  unit.variation || null,
-              })
-            )
+                variation,
+              };
+            })
         );
 
       setCart(
@@ -363,8 +420,7 @@ function App() {
               item?.title || null,
             quantity,
             variation_id:
-              item?.variation?.id ||
-              null,
+              canonicalVariationId(item, item?.item_id || item?.id),
           }),
         }
       );

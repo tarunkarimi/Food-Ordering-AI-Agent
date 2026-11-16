@@ -13,6 +13,13 @@ const MENU_ITEM = {
   description: "A deterministic menu item for the browser smoke test.",
   base_price: 7.5,
 };
+const VARIANT_MENU_ITEM = {
+  id: "smoke-item-002",
+  title: "Cart Smoke Dumplings",
+  description: "A deterministic menu item with a selected variation.",
+  base_price: 8,
+  variations: [{ id: "large", name: "Large", price: 12 }],
+};
 
 function cartState(items) {
   return {
@@ -22,10 +29,10 @@ function cartState(items) {
         title: item.title,
         units: [
           {
-            key: `${item.item_id}|no_variant`,
+            key: `${item.item_id}|${item.variation_id}`,
             quantity: item.quantity,
             base_price: item.base_price,
-            variation: null,
+            variation: item.variation,
           },
         ],
       })),
@@ -88,7 +95,7 @@ test("authenticated user can add, retain, and remove a menu item", async ({
         body: JSON.stringify({
           restaurant_name: "Smoke Test Restaurant",
           subdomain: "test",
-          items: [MENU_ITEM],
+          items: [MENU_ITEM, VARIANT_MENU_ITEM],
         }),
       });
       return;
@@ -124,21 +131,32 @@ test("authenticated user can add, retain, and remove a menu item", async ({
       const body = request.postDataJSON();
       cartRequests.push({ action, body });
       const sessionCart = mockCart.get(body.session_id) || new Map();
-      const current = sessionCart.get(body.item_id);
+      const cartKey = `${body.item_id}|${body.variation_id || "no_variant"}`;
+      const current = sessionCart.get(cartKey);
+      const menuItem = [MENU_ITEM, VARIANT_MENU_ITEM].find(
+        (item) => item.id === body.item_id,
+      );
+      const selectedVariation = menuItem?.variations?.find(
+        (variation) => variation.id === body.variation_id,
+      );
 
       if (isAdd) {
-        sessionCart.set(body.item_id, {
+        sessionCart.set(cartKey, {
           item_id: body.item_id,
           title: body.title,
           quantity: (current?.quantity || 0) + body.quantity,
-          base_price: MENU_ITEM.base_price,
+          variation_id: body.variation_id || "no_variant",
+          variation: selectedVariation
+            ? { ...selectedVariation, price: String(selectedVariation.price) }
+            : null,
+          base_price: selectedVariation?.price ?? menuItem?.base_price,
         });
       } else if (current) {
         const remaining = current.quantity - body.quantity;
         if (remaining > 0) {
-          sessionCart.set(body.item_id, { ...current, quantity: remaining });
+          sessionCart.set(cartKey, { ...current, quantity: remaining });
         } else {
-          sessionCart.delete(body.item_id);
+          sessionCart.delete(cartKey);
         }
       }
 
@@ -206,6 +224,36 @@ test("authenticated user can add, retain, and remove a menu item", async ({
     page.getByRole("complementary").getByText("0 items", { exact: true }),
   ).toBeVisible();
 
+  const variantMenuItem = page
+    .getByRole("article")
+    .filter({ hasText: VARIANT_MENU_ITEM.title });
+  await variantMenuItem.getByRole("button", { name: "Add" }).click();
+  const variationDialog = page.getByRole("dialog", {
+    name: VARIANT_MENU_ITEM.title,
+  });
+  await expect(variationDialog).toBeVisible();
+  await expect(
+    variationDialog.getByRole("button", { name: /Large/ }),
+  ).toBeVisible();
+  await variationDialog.getByRole("button", { name: "Add to Cart" }).click();
+
+  const variantCartItem = page
+    .locator(".cart-item")
+    .filter({ hasText: VARIANT_MENU_ITEM.title });
+  await expect(variantCartItem).toBeVisible();
+  await expect(variantCartItem.getByText("Large", { exact: true })).toBeVisible();
+
+  await page.reload();
+  const persistedVariant = page
+    .locator(".cart-item")
+    .filter({ hasText: VARIANT_MENU_ITEM.title });
+  await expect(persistedVariant).toBeVisible();
+  await expect(persistedVariant.getByText("Large", { exact: true })).toBeVisible();
+  await persistedVariant.locator("button.delete-button").click();
+  await expect(page.getByText("Your cart is empty", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByText("Your cart is empty", { exact: true })).toBeVisible();
+
   expect([...intercepted].sort()).toEqual([
     "auth",
     "cart-add",
@@ -230,7 +278,7 @@ test("authenticated user can add, retain, and remove a menu item", async ({
         item_id: MENU_ITEM.id,
         title: MENU_ITEM.title,
         quantity: 1,
-        variation_id: null,
+        variation_id: "no_variant",
       },
     },
     {
@@ -243,6 +291,30 @@ test("authenticated user can add, retain, and remove a menu item", async ({
         title: MENU_ITEM.title,
         quantity: 1,
         variation_id: "no_variant",
+      },
+    },
+    {
+      action: "cart-add",
+      body: {
+        session_id: stateSessions[0].sessionId,
+        restaurant_name: "Smoke Test Restaurant",
+        subdomain: "test",
+        item_id: VARIANT_MENU_ITEM.id,
+        title: VARIANT_MENU_ITEM.title,
+        quantity: 1,
+        variation_id: "large",
+      },
+    },
+    {
+      action: "cart-remove",
+      body: {
+        session_id: stateSessions[0].sessionId,
+        restaurant_name: "Smoke Test Restaurant",
+        subdomain: "test",
+        item_id: VARIANT_MENU_ITEM.id,
+        title: VARIANT_MENU_ITEM.title,
+        quantity: 1,
+        variation_id: "large",
       },
     },
   ]);

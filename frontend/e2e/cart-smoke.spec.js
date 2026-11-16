@@ -33,12 +33,20 @@ function cartState(items) {
   };
 }
 
+// FastAPI serializes LangGraph's StateSnapshot as a tuple-like JSON array:
+// `values` is element zero. Keep this fixture aligned with GET /api/chats/state.
+function stateSnapshot(items) {
+  return [cartState(items), [], {}, {}, null, null, [], []];
+}
+
 test("authenticated user can add, retain, and remove a menu item", async ({
   page,
 }) => {
   const mockCart = new Map();
   const unexpectedRequests = [];
   const intercepted = new Set();
+  const cartRequests = [];
+  const stateSessions = [];
 
   await page.addInitScript(
     ({ tokenKey, userKey, user }) => {
@@ -89,11 +97,16 @@ test("authenticated user can add, retain, and remove a menu item", async ({
     if (pathname.endsWith("/api/chats/state") && request.method() === "GET") {
       intercepted.add("cart-state");
       const sessionId = url.searchParams.get("session_id");
+      stateSessions.push({
+        sessionId,
+        restaurantName: url.searchParams.get("restaurant_name"),
+        subdomain: url.searchParams.get("subdomain"),
+      });
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify(
-          cartState(Array.from(mockCart.get(sessionId)?.values() || [])),
+          stateSnapshot(Array.from(mockCart.get(sessionId)?.values() || [])),
         ),
       });
       return;
@@ -109,6 +122,7 @@ test("authenticated user can add, retain, and remove a menu item", async ({
       intercepted.add(action);
 
       const body = request.postDataJSON();
+      cartRequests.push({ action, body });
       const sessionCart = mockCart.get(body.session_id) || new Map();
       const current = sessionCart.get(body.item_id);
 
@@ -198,6 +212,39 @@ test("authenticated user can add, retain, and remove a menu item", async ({
     "cart-remove",
     "cart-state",
     "menu",
+  ]);
+  expect(stateSessions.length).toBeGreaterThanOrEqual(4);
+  expect(new Set(stateSessions.map(({ sessionId }) => sessionId)).size).toBe(1);
+  expect(stateSessions.every(({ sessionId, restaurantName, subdomain }) =>
+    Boolean(sessionId) &&
+    restaurantName === "Smoke Test Restaurant" &&
+    subdomain === "test"
+  )).toBe(true);
+  expect(cartRequests).toEqual([
+    {
+      action: "cart-add",
+      body: {
+        session_id: stateSessions[0].sessionId,
+        restaurant_name: "Smoke Test Restaurant",
+        subdomain: "test",
+        item_id: MENU_ITEM.id,
+        title: MENU_ITEM.title,
+        quantity: 1,
+        variation_id: null,
+      },
+    },
+    {
+      action: "cart-remove",
+      body: {
+        session_id: stateSessions[0].sessionId,
+        restaurant_name: "Smoke Test Restaurant",
+        subdomain: "test",
+        item_id: MENU_ITEM.id,
+        title: MENU_ITEM.title,
+        quantity: 1,
+        variation_id: "no_variant",
+      },
+    },
   ]);
   expect(unexpectedRequests).toEqual([]);
 });

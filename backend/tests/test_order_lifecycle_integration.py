@@ -10,6 +10,8 @@ import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 import requests
@@ -157,6 +159,10 @@ def initial_state():
         "order_confirmation_pending": False,
         "restaurant_name": "Test Restaurant",
         "subdomain": "test",
+        # Tools require the authenticated graph owner before they inspect or
+        # call the order backend. This synthetic identity is isolated to this
+        # in-process integration test.
+        "user_id": 990001,
         "finished": False,
     }
 
@@ -294,15 +300,30 @@ def test_order_lifecycle_over_real_menu_backend(
     # 7. A real backend 404 must not alter the existing lifecycle state.
     before_missing_cancel = dict(state)
 
-    state = invoke_tool(
-        tool_graph,
-        state,
-        "cancel_order",
-        {
-            "order_id": "ORD-MISSING",
-        },
-        "missing-cancel",
-    )
+    # The unknown-order ownership lookup normally consults persistence before
+    # making an upstream request. Keep this in-process integration test
+    # database-independent while exercising the real menu backend's 404 path.
+    with (
+        patch("src.agents.tools.order.SessionLocal") as session_local,
+        patch(
+            "src.agents.tools.order.get_order_history",
+            return_value=SimpleNamespace(
+                order_id="ORD-MISSING",
+                restaurant_name="Test Restaurant",
+                subdomain="test",
+            ),
+        ),
+    ):
+        session_local.return_value.__enter__.return_value = object()
+        state = invoke_tool(
+            tool_graph,
+            state,
+            "cancel_order",
+            {
+                "order_id": "ORD-MISSING",
+            },
+            "missing-cancel",
+        )
 
     assert isinstance(
         state["messages"][-1],

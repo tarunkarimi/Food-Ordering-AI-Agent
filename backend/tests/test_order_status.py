@@ -181,6 +181,75 @@ def test_unowned_explicit_order_id_does_not_call_backend():
     assert "associated with your account" in tool_content(result)
 
 
+def test_active_order_without_authenticated_user_fails_closed():
+    state = make_state(make_cart())
+    state["orderId"] = "ORD-ACTIVE"
+
+    with (
+        patch("src.agents.tools.order.requests.get") as get,
+        patch("src.agents.tools.order.requests.delete") as delete,
+    ):
+        status_result = lookup(state)
+        cancel_result = cancel(state)
+
+    get.assert_not_called()
+    delete.assert_not_called()
+    assert "associated with your account" in tool_content(status_result)
+    assert "associated with your account" in tool_content(cancel_result)
+
+
+def test_missing_active_order_tenant_fails_closed_before_backend_call():
+    state = make_state(make_cart())
+    state["user_id"] = 123
+    state["orderId"] = "ORD-ACTIVE"
+    state["subdomain"] = " "
+
+    with (
+        patch("src.agents.tools.order.requests.get") as get,
+        patch("src.agents.tools.order.requests.delete") as delete,
+    ):
+        status_result = lookup(state)
+        cancel_result = cancel(state)
+
+    get.assert_not_called()
+    delete.assert_not_called()
+    assert "verified restaurant identity" in tool_content(status_result)
+    assert "verified restaurant identity" in tool_content(cancel_result)
+
+
+def test_status_and_cancellation_reject_cross_tenant_backend_responses():
+    state = make_state(make_cart())
+    state["user_id"] = 123
+    state["orderId"] = "ORD-OWNED"
+    before = state.copy()
+
+    mismatched_order = order_response(payload={
+        **order_response().json.return_value,
+        "order_id": "ORD-OWNED",
+        "subdomain": "another-tenant",
+    })
+
+    with (
+        patch(
+            "src.agents.tools.order.requests.get",
+            return_value=mismatched_order,
+        ) as get,
+        patch(
+            "src.agents.tools.order.requests.delete",
+            return_value=mismatched_order,
+        ) as delete,
+    ):
+        status_result = lookup(state)
+        cancel_result = cancel(state)
+
+    assert get.call_args.kwargs["params"] == {"subdomain": "test"}
+    assert delete.call_args.kwargs["params"] == {"subdomain": "test"}
+    assert "invalid response" in tool_content(status_result)
+    assert "invalid response" in tool_content(cancel_result)
+    assert_state_unchanged(before, status_result)
+    assert_state_unchanged(before, cancel_result)
+
+
 def test_not_found_and_http_errors_are_safe():
     for status_code in (404, 400, 500):
         state = make_state(make_cart())

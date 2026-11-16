@@ -61,7 +61,7 @@ function formatDate(value) {
   });
 }
 
-function OrderingIntelligencePanel({ restaurantName }) {
+function OrderingIntelligencePanel({ restaurantName, subdomain }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [intelligence, setIntelligence] = useState(null);
@@ -73,13 +73,18 @@ function OrderingIntelligencePanel({ restaurantName }) {
       setLoading(true);
       setError("");
 
-      const restaurantQuery = restaurantName
-        ? `?restaurant_name=${encodeURIComponent(restaurantName)}`
+      const intelligenceParams = new URLSearchParams();
+      if (restaurantName) intelligenceParams.set("restaurant_name", restaurantName);
+      if (subdomain) intelligenceParams.set("subdomain", subdomain);
+      const intelligenceQuery = intelligenceParams.toString();
+      const restaurantQuery = intelligenceQuery
+        ? `?${intelligenceQuery}`
         : "";
 
-      const suggestionsQuery = restaurantName
-        ? `?restaurant_name=${encodeURIComponent(restaurantName)}&limit=5`
-        : "?limit=5";
+      const suggestionsParams = new URLSearchParams({ limit: "5" });
+      if (restaurantName) suggestionsParams.set("restaurant_name", restaurantName);
+      if (subdomain) suggestionsParams.set("subdomain", subdomain);
+      const suggestionsQuery = `?${suggestionsParams.toString()}`;
 
       const headers = getAuthHeaders();
 
@@ -99,17 +104,11 @@ function OrderingIntelligencePanel({ restaurantName }) {
       const suggestionsData = await suggestionsResponse.json();
 
       if (!intelligenceResponse.ok) {
-        throw new Error(
-          intelligenceData?.detail ||
-            "Unable to load ordering intelligence."
-        );
+        throw new Error("Unable to load ordering intelligence.");
       }
 
       if (!suggestionsResponse.ok) {
-        throw new Error(
-          suggestionsData?.detail ||
-            "Unable to load reorder suggestions."
-        );
+        throw new Error("Unable to load reorder suggestions.");
       }
 
       setIntelligence(intelligenceData);
@@ -120,10 +119,7 @@ function OrderingIntelligencePanel({ restaurantName }) {
           : []
       );
     } catch (loadError) {
-      console.error(
-        "Ordering intelligence error:",
-        loadError
-      );
+      console.warn("Ordering intelligence request failed.");
 
       setError(
         loadError?.message ||
@@ -132,7 +128,7 @@ function OrderingIntelligencePanel({ restaurantName }) {
     } finally {
       setLoading(false);
     }
-  }, [restaurantName]);
+  }, [restaurantName, subdomain]);
 
   const handleToggle = () => {
     const nextOpen = !open;

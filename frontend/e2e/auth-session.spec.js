@@ -10,6 +10,7 @@ const TEST_USER = {
 };
 
 test("authenticated session survives browser refresh", async ({ page }) => {
+  const unexpectedRequests = [];
   await page.addInitScript(
     ({ tokenKey, userKey, user }) => {
       localStorage.setItem(tokenKey, "e2e-valid-token");
@@ -22,11 +23,47 @@ test("authenticated session survives browser refresh", async ({ page }) => {
     },
   );
 
+  await page.route("**/*", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname.startsWith("/api/")) {
+      unexpectedRequests.push(`${request.method()} ${url.pathname}`);
+      await route.abort();
+      return;
+    }
+    if (url.origin === "http://127.0.0.1:5173") {
+      await route.continue();
+      return;
+    }
+    unexpectedRequests.push(`${request.method()} ${url.origin}${url.pathname}`);
+    await route.abort();
+  });
+
   await page.route("**/api/auth/me", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify(TEST_USER),
+    });
+  });
+
+  await page.route("**/api/chats/state*", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ cart: { items: [] } }),
+    });
+  });
+
+  await page.route("**/menu-api/**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        restaurant_name: "Session Test Restaurant",
+        subdomain: "test",
+        items: [],
+      }),
     });
   });
 
@@ -43,9 +80,11 @@ test("authenticated session survives browser refresh", async ({ page }) => {
   ).toBeVisible();
 
   await expect(page.getByText("Restoring your session...")).toHaveCount(0);
+  expect(unexpectedRequests).toEqual([]);
 });
 
 test("expired authenticated session returns user to login", async ({ page }) => {
+  const unexpectedRequests = [];
   await page.addInitScript(
     ({ tokenKey, userKey, user }) => {
       localStorage.setItem(tokenKey, "e2e-expired-token");
@@ -58,11 +97,39 @@ test("expired authenticated session returns user to login", async ({ page }) => 
     },
   );
 
+  await page.route("**/*", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname.startsWith("/api/")) {
+      unexpectedRequests.push(`${request.method()} ${url.pathname}`);
+      await route.abort();
+      return;
+    }
+    if (url.origin === "http://127.0.0.1:5173") {
+      await route.continue();
+      return;
+    }
+    unexpectedRequests.push(`${request.method()} ${url.origin}${url.pathname}`);
+    await route.abort();
+  });
+
   await page.route("**/api/auth/me", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify(TEST_USER),
+    });
+  });
+
+  await page.route("**/menu-api/**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        restaurant_name: "Session Test Restaurant",
+        subdomain: "test",
+        items: [],
+      }),
     });
   });
 
@@ -108,4 +175,5 @@ test("expired authenticated session returns user to login", async ({ page }) => 
   );
 
   expect(user).toBeNull();
+  expect(unexpectedRequests).toEqual([]);
 });

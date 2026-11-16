@@ -75,11 +75,16 @@ def test_tool_is_registered_and_explicit_order_id_succeeds():
     assert cancel_order in tools
 
     state = make_state(make_cart())
+    state["user_id"] = 123
+    state["orderId"] = "ORD-EXPLICIT"
     before = state.copy()
 
     with patch(
         "src.agents.tools.order.requests.get",
-        return_value=order_response(),
+        return_value=order_response(payload={
+            **order_response().json.return_value,
+            "order_id": "ORD-EXPLICIT",
+        }),
     ) as get:
         result = lookup(
             state,
@@ -89,18 +94,23 @@ def test_tool_is_registered_and_explicit_order_id_succeeds():
     assert get.call_args.args[0].endswith(
         "/orders/ORD-EXPLICIT"
     )
-    assert "Order ORD-123 is confirmed." in tool_content(result)
+    assert get.call_args.kwargs["params"] == {"subdomain": "test"}
+    assert "Order ORD-EXPLICIT is confirmed." in tool_content(result)
     assert_state_unchanged(before, result)
 
 
 def test_state_order_id_succeeds_and_formats_response():
     state = make_state(make_cart())
+    state["user_id"] = 123
     state["orderId"] = "ORD-STATE"
     before = state.copy()
 
     with patch(
         "src.agents.tools.order.requests.get",
-        return_value=order_response(),
+        return_value=order_response(payload={
+            **order_response().json.return_value,
+            "order_id": "ORD-STATE",
+        }),
     ):
         result = lookup(state)
 
@@ -115,6 +125,7 @@ def test_state_order_id_succeeds_and_formats_response():
 
 def test_status_lookup_renders_cancelled_status():
     state = make_state(make_cart())
+    state["user_id"] = 123
     state["orderId"] = "ORD-STATE"
 
     cancelled_order = order_response(
@@ -152,9 +163,28 @@ def test_no_order_id_does_not_call_backend_or_change_state():
     assert_state_unchanged(before, result)
 
 
+def test_unowned_explicit_order_id_does_not_call_backend():
+    state = make_state(make_cart())
+    state["user_id"] = 123
+
+    with (
+        patch("src.agents.tools.order.SessionLocal") as session_local,
+        patch("src.agents.tools.order.get_order_history", return_value=None),
+        patch("src.agents.tools.order.requests.get") as get,
+        patch("src.agents.tools.order.requests.delete") as delete,
+    ):
+        session_local.return_value.__enter__.return_value = object()
+        result = lookup(state, {"order_id": "OTHER-USERS-ORDER"})
+
+    get.assert_not_called()
+    delete.assert_not_called()
+    assert "associated with your account" in tool_content(result)
+
+
 def test_not_found_and_http_errors_are_safe():
     for status_code in (404, 400, 500):
         state = make_state(make_cart())
+        state["user_id"] = 123
         state["orderId"] = "ORD-123"
         before = state.copy()
 
@@ -177,6 +207,7 @@ def test_connection_failure_and_timeout_are_safe():
         requests.Timeout,
     ):
         state = make_state(make_cart())
+        state["user_id"] = 123
         state["orderId"] = "ORD-123"
         before = state.copy()
 
@@ -198,6 +229,7 @@ def test_malformed_response_and_missing_order_id_are_safe():
 
     for payload in malformed_payloads:
         state = make_state(make_cart())
+        state["user_id"] = 123
         state["orderId"] = "ORD-123"
         before = state.copy()
 
@@ -213,6 +245,7 @@ def test_malformed_response_and_missing_order_id_are_safe():
 
 def test_successful_cancellation_updates_status_and_preserves_order_state():
     state = make_state(make_cart())
+    state["user_id"] = 123
     state["orderId"] = "ORD-123"
     state["order_status"] = "confirmed"
     cart_before = state["cart"]
@@ -222,6 +255,8 @@ def test_successful_cancellation_updates_status_and_preserves_order_state():
         return_value=order_response(
             payload={
                 "order_id": "ORD-123",
+                "restaurant_name": "Test Restaurant",
+                "subdomain": "test",
                 "status": "cancelled",
             }
         ),
@@ -231,6 +266,7 @@ def test_successful_cancellation_updates_status_and_preserves_order_state():
     assert delete.call_args.args[0].endswith(
         "/orders/ORD-123"
     )
+    assert delete.call_args.kwargs["params"] == {"subdomain": "test"}
     assert "cancelled successfully" in tool_content(result)
     assert result["order_status"] == "cancelled"
     assert result["cart"] == cart_before
@@ -265,6 +301,7 @@ def test_cancel_failure_paths_preserve_state():
 
     for failure in failures:
         state = make_state(make_cart())
+        state["user_id"] = 123
         state["orderId"] = "ORD-123"
         state["order_status"] = "confirmed"
         before = state.copy()

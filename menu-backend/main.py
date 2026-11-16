@@ -590,7 +590,7 @@ def create_order(order: OrderRequest):
 # ------------------------------------------------------------------
 
 @app.get("/orders/{order_id}")
-def get_order(order_id: str):
+def get_order(order_id: str, subdomain: str = Query(..., min_length=1)):
     order = ORDERS.get(order_id)
 
     if order is None:
@@ -603,6 +603,9 @@ def get_order(order_id: str):
             status_code=404,
             detail="Order not found",
         )
+
+    if not subdomain.strip() or order.get("subdomain") != subdomain:
+        raise HTTPException(status_code=404, detail="Order not found")
 
     logger.info(
         "Order retrieved | order_id=%s | status=%s",
@@ -618,7 +621,7 @@ def get_order(order_id: str):
 # ------------------------------------------------------------------
 
 @app.delete("/orders/{order_id}")
-def cancel_order(order_id: str):
+def cancel_order(order_id: str, subdomain: str = Query(..., min_length=1)):
     """
     Cancel an existing order while retaining it
     for later status lookup.
@@ -636,6 +639,9 @@ def cancel_order(order_id: str):
             status_code=404,
             detail="Order not found",
         )
+
+    if not subdomain.strip() or order.get("subdomain") != subdomain:
+        raise HTTPException(status_code=404, detail="Order not found")
 
     if order["status"] == "cancelled":
         logger.warning(

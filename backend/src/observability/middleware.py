@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import logging
+import re
 
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -26,9 +27,11 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
     """Attach request IDs, structured request logs, and metrics."""
 
     async def dispatch(self, request: Request, call_next):
+        supplied_request_id = request.headers.get("X-Request-ID", "")
         request_id = (
-            request.headers.get("X-Request-ID")
-            or new_request_id()
+            supplied_request_id
+            if re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", supplied_request_id)
+            else new_request_id()
         )
 
         set_request_id(request_id)

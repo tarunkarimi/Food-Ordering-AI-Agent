@@ -46,6 +46,21 @@ def test_request_id_header_is_propagated():
     assert response.headers["X-Request-ID"] == request_id
 
 
+def test_malformed_or_unbounded_request_id_is_replaced():
+    client = TestClient(app)
+
+    for supplied_id in ("bad\nheader", "x" * 129):
+        response = client.get(
+            "/health",
+            headers={"X-Request-ID": supplied_id},
+        )
+
+        assert response.status_code == 200
+        generated_id = response.headers["X-Request-ID"]
+        assert len(generated_id) == 32
+        assert generated_id != supplied_id
+
+
 def test_request_id_context_is_available():
     request_id = new_request_id()
 

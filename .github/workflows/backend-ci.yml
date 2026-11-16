@@ -89,6 +89,8 @@ jobs:
           tests/test_reorder_safety_unit.py
           tests/test_reorder_agent_tool.py
           tests/test_personalization_prompt.py -q
+      - name: Run order status unit tests
+        run: uv run pytest tests/test_order_status.py -q
       - name: Run database safety tests
         run: uv run pytest tests/test_db_test_safety.py -q
 
@@ -101,10 +103,12 @@ jobs:
           tests/test_reorder_cart.py -q
 
       - name: Run observability tests
-        run: uv run pytest tests/test_agent_observability.py -q
+        run: uv run pytest tests/test_agent_observability.py tests/test_observability.py -q
 
       - name: Run auth authorization tests
-        run: uv run pytest tests/test_auth_authorization.py -q
+        run: >-
+          uv run pytest tests/test_auth_authorization.py
+          tests/test_authenticated_order_cancellation.py -q
 
       - name: Run authenticated persistence regressions
         run: uv run pytest tests/test_authenticated_persistence_regressions.py -q
@@ -137,6 +141,12 @@ jobs:
       - name: Build frontend
         run: npm run build
 
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run mocked Playwright E2E tests
+        run: npx playwright test --project=chromium --reporter=line
+
   menu-backend:
     name: Menu Backend Validation
     runs-on: ubuntu-latest
@@ -155,10 +165,13 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt pytest httpx
 
       - name: Compile menu backend
         run: python -m compileall main.py -q
+
+      - name: Run menu backend tests
+        run: python -m pytest -q
 
   docker:
     name: Docker Builds

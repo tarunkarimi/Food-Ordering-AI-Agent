@@ -1,4 +1,14 @@
-# React + Vite
+# Food Ordering AI Agent — Frontend
+
+## API and restaurant configuration
+
+The frontend supports these Vite environment settings:
+
+- `VITE_AI_API_URL`: AI backend base URL. Defaults to the same origin so the Vite proxy can route `/api` requests.
+- `VITE_MENU_API_URL`: menu backend base URL. Defaults to `/menu-api`, which uses the Vite proxy in development.
+- `VITE_RESTAURANT_SUBDOMAIN`: restaurant tenant requested for menu, chat, cart, and ordering-intelligence calls. Defaults to `test` for local development and mocked E2E coverage.
+
+Configure the production tenant explicitly at build time. Menu responses are accepted only when their `subdomain` exactly matches the requested tenant.
 
 This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
 

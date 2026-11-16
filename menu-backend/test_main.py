@@ -265,14 +265,16 @@ def test_order_lookup_and_missing_order_lookup():
 
     assert (
         client.get(
-            f"/orders/{created['order_id']}"
+            f"/orders/{created['order_id']}",
+            params={"subdomain": "test"},
         ).json()
         == created
     )
 
     assert (
         client.get(
-            "/orders/ORD-MISSING"
+            "/orders/ORD-MISSING",
+            params={"subdomain": "test"},
         ).status_code
         == 404
     )
@@ -291,7 +293,8 @@ def test_successful_cancellation_and_lookup_remains_available():
     created = created_response.json()
 
     cancelled = client.delete(
-        f"/orders/{created['order_id']}"
+        f"/orders/{created['order_id']}",
+        params={"subdomain": "test"},
     )
 
     assert cancelled.status_code == 200
@@ -299,7 +302,8 @@ def test_successful_cancellation_and_lookup_remains_available():
 
     assert (
         client.get(
-            f"/orders/{created['order_id']}"
+            f"/orders/{created['order_id']}",
+            params={"subdomain": "test"},
         ).json()["status"]
         == "cancelled"
     )
@@ -308,7 +312,8 @@ def test_successful_cancellation_and_lookup_remains_available():
 def test_cancel_missing_or_already_cancelled_order():
     assert (
         client.delete(
-            "/orders/ORD-MISSING"
+            "/orders/ORD-MISSING",
+            params={"subdomain": "test"},
         ).status_code
         == 404
     )
@@ -324,14 +329,44 @@ def test_cancel_missing_or_already_cancelled_order():
 
     assert (
         client.delete(
-            f"/orders/{created['order_id']}"
+            f"/orders/{created['order_id']}",
+            params={"subdomain": "test"},
         ).status_code
         == 200
     )
 
     assert (
         client.delete(
-            f"/orders/{created['order_id']}"
+            f"/orders/{created['order_id']}",
+            params={"subdomain": "test"},
         ).status_code
         == 400
     )
+
+
+def test_order_lookup_and_cancellation_reject_wrong_tenant_before_mutation():
+    ORDERS.clear()
+    try:
+        created_response = client.post("/orders", json=valid_order())
+        assert created_response.status_code == 201
+        order_id = created_response.json()["order_id"]
+
+        assert client.get(
+            f"/orders/{order_id}",
+            params={"subdomain": "another-tenant"},
+        ).status_code == 404
+
+        rejected_cancel = client.delete(
+            f"/orders/{order_id}",
+            params={"subdomain": "another-tenant"},
+        )
+        assert rejected_cancel.status_code == 404
+
+        still_confirmed = client.get(
+            f"/orders/{order_id}",
+            params={"subdomain": "test"},
+        )
+        assert still_confirmed.status_code == 200
+        assert still_confirmed.json()["status"] == "confirmed"
+    finally:
+        ORDERS.clear()

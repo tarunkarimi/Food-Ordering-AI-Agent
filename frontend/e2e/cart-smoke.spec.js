@@ -79,6 +79,7 @@ test("authenticated user can add, retain, and remove a menu item", async ({
         contentType: "application/json",
         body: JSON.stringify({
           restaurant_name: "Smoke Test Restaurant",
+          subdomain: "test",
           items: [MENU_ITEM],
         }),
       });

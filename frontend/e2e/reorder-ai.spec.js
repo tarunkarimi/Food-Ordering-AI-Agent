@@ -3,6 +3,7 @@
 test("reorder with AI sends the previous order through the AI chat flow", async ({
   page,
 }) => {
+  const unexpectedRequests = [];
   const orderId = "TEST-REORDER-001";
   const assistantMessage =
     "I prepared your previous order in your current cart using today's menu and prices.";
@@ -14,6 +15,17 @@ test("reorder with AI sends the previous order through the AI chat flow", async 
       JSON.stringify({ id: 1, email: "test@example.com" })
     );
     localStorage.setItem("food_agent_session", "reorder-e2e-session");
+  });
+
+  await page.route("**/*", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname.startsWith("/api/") || url.origin !== "http://127.0.0.1:5173") {
+      unexpectedRequests.push(`${request.method()} ${url.origin}${url.pathname}`);
+      await route.abort();
+      return;
+    }
+    await route.continue();
   });
 
   await page.route("**/api/auth/me", async (route) => {
@@ -87,6 +99,7 @@ test("reorder with AI sends the previous order through the AI chat flow", async 
       contentType: "application/json",
       body: JSON.stringify({
         restaurant_name: "Test Restaurant",
+        subdomain: "test",
         items: [],
       }),
     });
@@ -113,4 +126,5 @@ test("reorder with AI sends the previous order through the AI chat flow", async 
   ).toBeVisible();
 
   await expect(page.getByText(assistantMessage)).toBeVisible();
+  expect(unexpectedRequests).toEqual([]);
 });

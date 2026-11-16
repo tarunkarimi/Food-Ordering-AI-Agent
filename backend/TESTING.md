@@ -72,7 +72,11 @@ uv run pytest tests/test_recommendations.py tests/test_recommendation_ranking.py
 
 The suite does not create a database fixture, wrap each test in a rollback, or consistently clean up rows. Many tests commit users, sessions, carts, preferences, and order history. Do not run database-backed tests against a shared, development, staging, or production database. This guard checks explicit target configuration and naming; it cannot prove ownership or isolation of the remote database without an out-of-band verification by its owner.
 
-Database isolation does not isolate other external effects. Signup and verification API tests can call OTP delivery, which may send email or SMS when SMTP/Twilio settings are active. Checkout and order tests may call a configured menu/order service; some tests patch those calls, but not all have been audited for that purpose. Before running those tests, use test-only provider settings and confirm external delivery/order endpoints are disabled or mocked.
+The shared `tests/conftest.py` replaces route-level OTP delivery with a no-op for every pytest test. Tests that call non-test menu or order services must still mock those calls; database isolation alone does not isolate external systems.
+
+The Full Stack CI workflow runs the authenticated order-cancellation persistence regression only after migrations. Its database-independent order-status and observability unit tests run in the same job. The frontend job runs the mocked Chromium E2E suite after lint/build; each test intercepts API requests and blocks unexpected external requests. The menu-backend job installs pytest/httpx and runs its in-memory API tests.
+
+Menu-backend order status and cancellation lookups require a `subdomain` query parameter. Backend callers send the order's stored tenant identity; mismatches return 404 before cancellation can mutate the in-memory order.
 
 ## Recommendation ingredient-data limitation
 

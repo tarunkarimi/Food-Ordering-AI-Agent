@@ -17,6 +17,8 @@ import OrderingIntelligencePanel from "./components/OrderingIntelligencePanel";
 
 const MENU_API = import.meta.env.VITE_MENU_API_URL || "/menu-api";
 const AI_API = import.meta.env.VITE_AI_API_URL || "";
+const RESTAURANT_SUBDOMAIN =
+  import.meta.env.VITE_RESTAURANT_SUBDOMAIN || "test";
 
 const FRONTEND_REQUEST_TIMEOUT_MS = 15000;
 
@@ -204,8 +206,16 @@ function App() {
   );
 
   useEffect(() => {
-    loadMenu();
-    syncCartFromAI(sessionId);
+    async function initializeApp() {
+      const loadedRestaurant = await loadMenu();
+      if (loadedRestaurant) {
+        await syncCartFromAI(sessionId, loadedRestaurant);
+      } else {
+        setCart([]);
+      }
+    }
+
+    void initializeApp();
   }, [sessionId]);
 
   async function loadMenu() {
@@ -214,56 +224,63 @@ function App() {
       setMenuError("");
 
       const response = await fetchWithTimeout(
-        `${MENU_API}/?subdomain=test`
+        `${MENU_API}/?subdomain=${encodeURIComponent(RESTAURANT_SUBDOMAIN)}`
       );
 
       if (!response.ok) {
-        throw new Error(
-          `Menu service returned ${response.status}`
-        );
+        throw new Error("Menu request failed.");
       }
 
       const data = await response.json();
-
-      const items = Array.isArray(data?.items)
-        ? data.items
-        : Array.isArray(data)
-        ? data
-        : [];
-
-      setMenu(items);
-
-      if (data?.restaurant_name) {
-        setRestaurant(
-          data.restaurant_name
+      const validEnvelope =
+        data &&
+        typeof data === "object" &&
+        data.subdomain === RESTAURANT_SUBDOMAIN &&
+        typeof data.restaurant_name === "string" &&
+        data.restaurant_name.trim() &&
+        Array.isArray(data.items) &&
+        data.items.every(
+          (item) =>
+            item &&
+            typeof item === "object" &&
+            (typeof item.id === "string" || typeof item.id === "number") &&
+            typeof item.title === "string" &&
+            item.title.trim()
         );
+
+      if (!validEnvelope) {
+        throw new Error("Menu identity or contents could not be verified.");
       }
 
-      if (!items.length) {
-        setMenuError(
-          "The restaurant returned an empty menu."
-        );
-      }
-    } catch (error) {
-      console.error(
-        "Menu loading error:",
-        error
-      );
+      setMenu(data.items);
+      setRestaurant(data.restaurant_name.trim());
 
-      setMenuError(
-        "Could not load the restaurant menu. Check that the menu backend is running on port 8000."
-      );
+      if (!data.items.length) {
+        setMenuError("The restaurant returned an empty menu.");
+      }
+
+      return data.restaurant_name.trim();
+    } catch {
+      console.warn("Restaurant menu verification failed.");
+      setMenu([]);
+      setMenuError("Could not verify the restaurant menu. Please try again later.");
+      return null;
     } finally {
       setLoadingMenu(false);
     }
   }
 
-  async function syncCartFromAI(currentSessionId) {
+  async function syncCartFromAI(
+    currentSessionId,
+    currentRestaurant = restaurant
+  ) {
     try {
       const response = await fetchWithTimeout(
         `${AI_API}/api/chats/state?session_id=${encodeURIComponent(
           currentSessionId
-        )}`
+        )}&restaurant_name=${encodeURIComponent(
+          currentRestaurant || "Test Restaurant"
+        )}&subdomain=${encodeURIComponent(RESTAURANT_SUBDOMAIN)}`
       );
 
       if (!response.ok) {
@@ -312,11 +329,8 @@ function App() {
             item.quantity > 0
         )
       );
-    } catch (error) {
-      console.error(
-        "Cart sync error:",
-        error
-      );
+    } catch {
+      console.warn("Cart state could not be refreshed.");
     }
   }
 
@@ -340,7 +354,7 @@ function App() {
             session_id: sessionId,
             restaurant_name:
               restaurant,
-            subdomain: "test",
+            subdomain: RESTAURANT_SUBDOMAIN,
             item_id:
               item?.item_id ||
               item?.id ||
@@ -355,27 +369,19 @@ function App() {
         }
       );
 
-      const data = await response.json();
-
       if (!response.ok) {
-        throw new Error(
-          data?.detail ||
-            "Cart update failed"
-        );
+        throw new Error("I couldn't update your cart. Please try again.");
       }
 
       await syncCartFromAI(sessionId);
     } catch (error) {
-      console.error(
-        "Manual cart update error:",
-        error
-      );
+      console.warn("Cart update request failed.");
 
       setMessages((previous) => [
         ...previous,
         {
           role: "assistant",
-          content: `I couldn't update your cart: ${error.message}`,
+          content: error.message,
         },
       ]);
     } finally {
@@ -467,32 +473,24 @@ function App() {
             session_id: sessionId,
             restaurant_name:
               restaurant,
-            subdomain: "test",
+            subdomain: RESTAURANT_SUBDOMAIN,
           }),
         }
       );
 
-      const data = await response.json();
-
       if (!response.ok) {
-        throw new Error(
-          data?.detail ||
-            "Unable to clear cart"
-        );
+        throw new Error("I couldn't clear your cart. Please try again.");
       }
 
       await syncCartFromAI(sessionId);
     } catch (error) {
-      console.error(
-        "Clear cart error:",
-        error
-      );
+      console.warn("Clear cart request failed.");
 
       setMessages((previous) => [
         ...previous,
         {
           role: "assistant",
-          content: `I couldn't clear your cart: ${error.message}`,
+          content: error.message,
         },
       ]);
     } finally {
@@ -572,21 +570,19 @@ function App() {
         },
       ]);
 
-      // Do not make the user wait for the extra state round trip
-      // before seeing the AI response.
       void syncCartFromAI(sessionId);
     } catch (error) {
-      console.error(
-        "AI request error:",
-        error
-      );
+      console.warn("AI request failed.");
 
       setMessages((previous) => [
         ...previous,
         {
           role: "assistant",
           content:
-            "Sorry, I couldn't connect to the AI ordering service. Please make sure the AI backend on port 8001 is running.",
+            (error?.message === "The request timed out. Please try again."
+              ? error.message
+              : null) ||
+            "The AI service encountered an unexpected error. Please try again.",
         },
       ]);
     } finally {
@@ -622,10 +618,7 @@ function App() {
         await response.json();
 
       if (!response.ok) {
-        throw new Error(
-          data.detail ||
-            "Order failed"
-        );
+        throw new Error("I couldn't place the order. Please try again.");
       }
 
       setOrder(data);
@@ -680,10 +673,7 @@ function App() {
         await response.json();
 
       if (!response.ok) {
-        throw new Error(
-          data.detail ||
-            "Unable to cancel order"
-        );
+        throw new Error("I couldn't cancel the order. Please try again.");
       }
 
       setOrder((previous) =>
@@ -703,16 +693,13 @@ function App() {
         },
       ]);
     } catch (error) {
-      console.error(
-        "Cancel order error:",
-        error
-      );
+      console.warn("Order cancellation request failed.");
 
       setMessages((previous) => [
         ...previous,
         {
           role: "assistant",
-          content: `I couldn't cancel the order: ${error.message}`,
+          content: error.message,
         },
       ]);
     } finally {
@@ -722,7 +709,10 @@ function App() {
 
   return (
     <>
-      <OrderingIntelligencePanel restaurantName={restaurant} />
+      <OrderingIntelligencePanel
+        restaurantName={restaurant}
+        subdomain={RESTAURANT_SUBDOMAIN}
+      />
       <OrderHistoryPanel
         onReorder={(orderId) =>
           sendMessage(null, `Reorder order ${orderId}`)

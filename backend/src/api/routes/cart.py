@@ -18,6 +18,7 @@ from src.services.cart import (
 )
 from src.services.order_history import (
     create_order_history,
+    get_order_history,
     update_order_history_status,
 )
 
@@ -678,14 +679,31 @@ def cancel_authenticated_order(
             detail="Order ID is required.",
         )
 
+    owned_order = get_order_history(
+        db,
+        user_id=auth.user.id,
+        order_id=requested_order_id,
+    )
+    if owned_order is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Order was not found.",
+        )
+    if not isinstance(owned_order.subdomain, str) or not owned_order.subdomain.strip():
+        raise HTTPException(
+            status_code=409,
+            detail="Unable to verify the order's restaurant identity.",
+        )
+
     order_url = (
         f"{config.MENU_BACKEND_URL.rstrip('/')}"
-        f"/orders/{requested_order_id}"
+        f"/orders/{requests.utils.quote(requested_order_id, safe='')}"
     )
 
     try:
         response = requests.delete(
             order_url,
+            params={"subdomain": owned_order.subdomain},
             timeout=10,
         )
 
@@ -707,6 +725,9 @@ def cancel_authenticated_order(
                 order.get("order_id"),
                 str,
             )
+            or order.get("order_id") != requested_order_id
+            or order.get("restaurant_name") != owned_order.restaurant_name
+            or order.get("subdomain") != owned_order.subdomain
         ):
             raise ValueError(
                 "Order API response is missing order_id"

@@ -361,7 +361,9 @@ def test_order_lifecycle_over_real_menu_backend(
         patch("src.agents.tools.order.SessionLocal"),
         patch(
             "src.agents.tools.order.begin_operation",
-            return_value=SimpleNamespace(status="pending", attempts=1, id=1),
+            return_value=SimpleNamespace(
+                status="pending", attempts=1, id=1, response_json=None,
+            ),
         ),
         patch("src.agents.tools.order.mark_operation_retryable"),
         patch(

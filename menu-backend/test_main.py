@@ -11,9 +11,24 @@ from order_storage import (
     get_order_repository,
     request_fingerprint,
 )
+from migration_config import MENU_VERSION_TABLE, configure_migration_context
 
 
 TEST_MENU_SERVICE_KEY = "synthetic-menu-service-key-minimum-32-characters"
+
+
+def test_menu_migrations_use_an_independent_version_table():
+    migration_context = MagicMock()
+
+    configure_migration_context(
+        migration_context,
+        url="postgresql+psycopg://synthetic/unused",
+        target_metadata=None,
+    )
+
+    assert MENU_VERSION_TABLE == "menu_backend_alembic_version"
+    assert MENU_VERSION_TABLE != "alembic_version"
+    assert migration_context.configure.call_args.kwargs["version_table"] == MENU_VERSION_TABLE
 
 
 class MemoryOrderRepository:

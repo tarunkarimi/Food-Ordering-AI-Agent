@@ -125,6 +125,9 @@ def test_storage_health_requires_migrated_menu_schema():
 
     assert repository.health() is True
     assert connection.execute.call_count == 3
+    assert connection.scalar.call_args.args[0].text == (
+        "SELECT version_num FROM menu_backend_alembic_version"
+    )
 
     connection.scalar.return_value = None
     with pytest.raises(OrderStorageUnavailable):

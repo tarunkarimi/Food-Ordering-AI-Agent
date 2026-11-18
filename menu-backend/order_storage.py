@@ -150,7 +150,11 @@ class PostgresOrderRepository:
                 connection.execute(text("SELECT 1"))
                 # Readiness requires the independently migrated schema, not
                 # just a reachable PostgreSQL server.
-                revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
+                # Read the menu service's independent Alembic history. The
+                # AI backend owns the unqualified ``alembic_version`` table.
+                revision = connection.scalar(text(
+                    "SELECT version_num FROM menu_backend_alembic_version"
+                ))
                 if not isinstance(revision, str) or not revision.strip():
                     raise OrderStorageUnavailable
                 connection.execute(text(

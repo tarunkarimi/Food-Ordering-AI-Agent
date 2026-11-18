@@ -1,10 +1,11 @@
 from unittest.mock import Mock, patch
+from types import SimpleNamespace
 
 import requests
 from langchain_core.messages import ToolMessage
 
 from src.agents.nodes.tool_node import tools
-from src.agents.tools.order import cancel_order, get_order_status
+from src.agents.tools.order import _cancel_with_outbox, cancel_order, get_order_status
 from tests.test_cart_tools import make_cart, make_state, run_tool
 
 
@@ -94,7 +95,7 @@ def test_tool_is_registered_and_explicit_order_id_succeeds():
     assert get.call_args.args[0].endswith(
         "/orders/ORD-EXPLICIT"
     )
-    assert get.call_args.kwargs["params"] == {"subdomain": "test"}
+    assert get.call_args.kwargs["params"] == {"subdomain": "test", "user_id": "123"}
     assert "Order ORD-EXPLICIT is confirmed." in tool_content(result)
     assert_state_unchanged(before, result)
 
@@ -235,15 +236,15 @@ def test_status_and_cancellation_reject_cross_tenant_backend_responses():
             return_value=mismatched_order,
         ) as get,
         patch(
-            "src.agents.tools.order.requests.delete",
-            return_value=mismatched_order,
+            "src.agents.tools.order._cancel_with_outbox",
+            side_effect=ValueError("mismatched tenant"),
         ) as delete,
     ):
         status_result = lookup(state)
         cancel_result = cancel(state)
 
-    assert get.call_args.kwargs["params"] == {"subdomain": "test"}
-    assert delete.call_args.kwargs["params"] == {"subdomain": "test"}
+    assert get.call_args.kwargs["params"] == {"subdomain": "test", "user_id": "123"}
+    delete.assert_called_once()
     assert "invalid response" in tool_content(status_result)
     assert "invalid response" in tool_content(cancel_result)
     assert_state_unchanged(before, status_result)
@@ -320,22 +321,19 @@ def test_successful_cancellation_updates_status_and_preserves_order_state():
     cart_before = state["cart"]
 
     with patch(
-        "src.agents.tools.order.requests.delete",
-        return_value=order_response(
-            payload={
-                "order_id": "ORD-123",
-                "restaurant_name": "Test Restaurant",
-                "subdomain": "test",
-                "status": "cancelled",
-            }
-        ),
+        "src.agents.tools.order._cancel_with_outbox",
+        return_value={
+            "order_id": "ORD-123",
+            "restaurant_name": "Test Restaurant",
+            "subdomain": "test",
+            "status": "cancelled",
+        },
     ) as delete:
         result = cancel(state)
 
-    assert delete.call_args.args[0].endswith(
-        "/orders/ORD-123"
-    )
-    assert delete.call_args.kwargs["params"] == {"subdomain": "test"}
+    delete.assert_called_once()
+    assert delete.call_args.args[0]["subdomain"] == "test"
+    assert delete.call_args.args[0]["user_id"] == 123
     assert "cancelled successfully" in tool_content(result)
     assert result["order_status"] == "cancelled"
     assert result["cart"] == cart_before
@@ -358,14 +356,13 @@ def test_cancel_without_order_id_preserves_state():
 
 
 def test_cancel_failure_paths_preserve_state():
+    from src.agents.tools.order import _OrderNotFound
     failures = [
-        order_response(404),
-        order_response(500),
+        _OrderNotFound,
+        requests.HTTPError,
         requests.ConnectionError,
         requests.Timeout,
-        order_response(
-            payload={"status": "cancelled"}
-        ),
+        ValueError,
     ]
 
     for failure in failures:
@@ -375,15 +372,7 @@ def test_cancel_failure_paths_preserve_state():
         state["order_status"] = "confirmed"
         before = state.copy()
 
-        side_effect = (
-            failure if isinstance(failure, type) else None
-        )
-
-        with patch(
-            "src.agents.tools.order.requests.delete",
-            return_value=None if side_effect else failure,
-            side_effect=side_effect,
-        ):
+        with patch("src.agents.tools.order._cancel_with_outbox", side_effect=failure):
             result = cancel(state)
 
         assert (
@@ -391,3 +380,86 @@ def test_cancel_failure_paths_preserve_state():
             or "was not found" in tool_content(result)
         )
         assert_state_unchanged(before, result)
+
+
+def test_agent_cancellation_persists_intent_before_upstream_call():
+    events = []
+    operation = SimpleNamespace(status="pending", response_json=None, attempts=1, id=1)
+    cancelled = {
+        "order_id": "ORD-123",
+        "restaurant_name": "Test Restaurant",
+        "subdomain": "test",
+        "status": "cancelled",
+    }
+
+    def persist_intent(*args, **kwargs):
+        events.append("intent")
+        return operation
+
+    def accept_cancellation(*args, **kwargs):
+        events.append("upstream")
+        return order_response(payload=cancelled)
+
+    with (
+        patch("src.agents.tools.order.SessionLocal"),
+        patch("src.agents.tools.order.begin_operation", side_effect=persist_intent) as begin,
+        patch("src.agents.tools.order.requests.delete", side_effect=accept_cancellation) as delete_call,
+        patch("src.agents.tools.order.mark_upstream_confirmed") as mark_upstream,
+        patch("src.agents.tools.order.mark_operation_complete") as complete,
+    ):
+        result = _cancel_with_outbox({
+            "order_id": "ORD-123", "restaurant_name": "Test Restaurant",
+            "subdomain": "test", "user_id": 123, "history_persisted": False,
+        })
+
+    assert result == cancelled
+    assert events == ["intent", "upstream"]
+    assert begin.call_args.kwargs["idempotency_key"] == "cancel:123:ORD-123"
+    assert delete_call.call_args.kwargs["params"] == {"subdomain": "test", "user_id": "123"}
+    mark_upstream.assert_called_once()
+    complete.assert_called_once()
+
+
+def test_agent_cancellation_retry_reconciles_confirmed_result_without_second_delete():
+    operation = SimpleNamespace(status="upstream_confirmed", response_json=None, attempts=2, id=1)
+    cancelled = {
+        "order_id": "ORD-123", "restaurant_name": "Test Restaurant",
+        "subdomain": "test", "status": "cancelled",
+    }
+
+    with (
+        patch("src.agents.tools.order.SessionLocal"),
+        patch("src.agents.tools.order.begin_operation", return_value=operation),
+        patch("src.agents.tools.order.operation_response", return_value=cancelled),
+        patch("src.agents.tools.order.requests.delete") as delete_call,
+        patch("src.agents.tools.order.mark_operation_complete") as complete,
+    ):
+        result = _cancel_with_outbox({
+            "order_id": "ORD-123", "restaurant_name": "Test Restaurant",
+            "subdomain": "test", "user_id": 123, "history_persisted": False,
+        })
+
+    assert result == cancelled
+    delete_call.assert_not_called()
+    complete.assert_called_once()
+
+
+def test_agent_cancellation_reuses_completed_api_operation_without_second_delete():
+    operation = SimpleNamespace(status="completed", response_json=None, attempts=2, id=1)
+    stored_result = {"success": True, "order_id": "ORD-123", "status": "cancelled"}
+
+    with (
+        patch("src.agents.tools.order.SessionLocal"),
+        patch("src.agents.tools.order.begin_operation", return_value=operation),
+        patch("src.agents.tools.order.operation_response", return_value=stored_result),
+        patch("src.agents.tools.order.requests.delete") as delete_call,
+    ):
+        result = _cancel_with_outbox({
+            "order_id": "ORD-123", "restaurant_name": "Test Restaurant",
+            "subdomain": "test", "user_id": 123, "history_persisted": True,
+        })
+
+    assert result["order_id"] == "ORD-123"
+    assert result["status"] == "cancelled"
+    assert result["subdomain"] == "test"
+    delete_call.assert_not_called()

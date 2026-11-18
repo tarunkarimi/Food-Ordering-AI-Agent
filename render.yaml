@@ -6,8 +6,8 @@ services:
     region: singapore
     plan: free
     buildCommand: uv sync --frozen --no-dev --no-install-project
-    startCommand: uv run --no-sync alembic upgrade head && exec uv run --no-sync uvicorn src.main:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /health
+    startCommand: uv run --no-sync uvicorn src.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /ready
     autoDeployTrigger: checksPass
     envVars:
       - key: GOOGLE_API_KEY
@@ -21,6 +21,8 @@ services:
           type: web
           name: food-ordering-menu-backend
           envVarKey: RENDER_EXTERNAL_URL
+      - key: MENU_SERVICE_API_KEY
+        sync: false
       - key: FRONTEND_ORIGINS
         fromService:
           type: web
@@ -37,6 +39,13 @@ services:
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     autoDeployTrigger: checksPass
+    envVars:
+      - key: MENU_DATABASE_URL
+        sync: false
+      - key: MENU_MIGRATION_DATABASE_URL
+        sync: false
+      - key: MENU_SERVICE_API_KEY
+        sync: false
 
   - type: web
     runtime: static

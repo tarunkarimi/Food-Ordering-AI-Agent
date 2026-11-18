@@ -33,6 +33,7 @@ class OrderState(TypedDict, total=False):
     cart: Optional[Cart]
     orderId: Optional[str]
     order_status: Optional[str]
+    order_history_persisted: bool
     order_confirmation_pending: bool
     restaurant_name: str
     subdomain: str

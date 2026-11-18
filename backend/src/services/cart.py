@@ -180,6 +180,7 @@ def clear_cart(
     db: Session,
     *,
     user_id: int,
+    commit: bool = True,
 ) -> Cart | None:
     """Remove all items from a user's persistent cart."""
     cart = get_cart(db, user_id=user_id)
@@ -191,7 +192,8 @@ def clear_cart(
         db,
         cart=cart,
     )
-    db.commit()
+    if commit:
+        db.commit()
 
     return get_cart(db, user_id=user_id)
 

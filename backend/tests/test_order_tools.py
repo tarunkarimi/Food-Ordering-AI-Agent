@@ -8,6 +8,7 @@ from tests.test_cart_tools import make_cart, make_state, run_tool
 
 def confirmed_state():
     state = make_state(make_cart())
+    state["user_id"] = 123
     state["order_confirmation_pending"] = True
     state["messages"] = [HumanMessage(content="yes")]
     return state
@@ -83,12 +84,12 @@ def test_place_order_accepts_explicit_confirm_order_response():
     ]
 
     with patch(
-        "src.agents.tools.cart.requests.post",
-        return_value=response(),
-    ) as post:
+        "src.agents.tools.cart._place_order_with_outbox",
+        return_value=(response().json.return_value, 2),
+    ) as place_order:
         result = place(state)
 
-    post.assert_called_once()
+    place_order.assert_called_once()
 
     assert result["orderId"] == "ORD-123"
     assert result["finished"] is True
@@ -135,12 +136,12 @@ def test_successful_order_placement_clears_cart_and_sets_completion():
     state = confirmed_state()
 
     with patch(
-        "src.agents.tools.cart.requests.post",
-        return_value=response(),
-    ) as post:
+        "src.agents.tools.cart._place_order_with_outbox",
+        return_value=(response().json.return_value, 2),
+    ) as place_order:
         result = place(state)
 
-    post.assert_called_once()
+    place_order.assert_called_once()
 
     assert result["cart"].items == []
     assert result["orderId"] == "ORD-123"
@@ -154,8 +155,8 @@ def test_backend_errors_preserve_order_state():
         state = confirmed_state()
 
         with patch(
-            "src.agents.tools.cart.requests.post",
-            return_value=response(status_code),
+            "src.agents.tools.cart._place_order_with_outbox",
+            side_effect=requests.HTTPError(f"synthetic {status_code}"),
         ):
             result = place(state)
 
@@ -169,7 +170,7 @@ def test_connection_failure_preserves_order_state():
     state = confirmed_state()
 
     with patch(
-        "src.agents.tools.cart.requests.post",
+        "src.agents.tools.cart._place_order_with_outbox",
         side_effect=requests.ConnectionError,
     ):
         result = place(state)
@@ -184,7 +185,7 @@ def test_timeout_preserves_order_state():
     state = confirmed_state()
 
     with patch(
-        "src.agents.tools.cart.requests.post",
+        "src.agents.tools.cart._place_order_with_outbox",
         side_effect=requests.Timeout,
     ):
         result = place(state)
@@ -199,12 +200,8 @@ def test_missing_order_id_preserves_order_state():
     state = confirmed_state()
 
     with patch(
-        "src.agents.tools.cart.requests.post",
-        return_value=response(
-            payload={
-                "subtotal": 440.0,
-            }
-        ),
+        "src.agents.tools.cart._place_order_with_outbox",
+        side_effect=ValueError("synthetic malformed upstream result"),
     ):
         result = place(state)
 

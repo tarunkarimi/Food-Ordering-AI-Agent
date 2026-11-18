@@ -1,11 +1,20 @@
 import logging
+import hmac
+import json
+from math import isfinite
 import os
 from typing import Any, Optional
-from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from order_storage import (
+    IdempotencyConflict,
+    OrderRepository,
+    OrderStorageUnavailable,
+    get_order_repository,
+    request_fingerprint,
+)
 
 
 # ------------------------------------------------------------------
@@ -20,11 +29,20 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _log_order_event(event: str, *, level: int = logging.INFO, **fields: Any) -> None:
+    """Write compact structured lifecycle events without keys or user data."""
+    logger.log(
+        level,
+        json.dumps({"event": event, **fields}, separators=(",", ":"), default=str),
+    )
+
+
 # ------------------------------------------------------------------
 # Application configuration
 # ------------------------------------------------------------------
 
 PORT = int(os.getenv("PORT", "8000"))
+MENU_SERVICE_API_KEY = os.getenv("MENU_SERVICE_API_KEY", "")
 
 
 # ------------------------------------------------------------------
@@ -140,14 +158,6 @@ MENUS = {
 
 
 # ------------------------------------------------------------------
-# Local-development storage.
-# Replace this with a database in a deployed service.
-# ------------------------------------------------------------------
-
-ORDERS: dict[str, dict[str, Any]] = {}
-
-
-# ------------------------------------------------------------------
 # Request models
 # ------------------------------------------------------------------
 
@@ -162,7 +172,47 @@ class OrderItemRequest(BaseModel):
 class OrderRequest(BaseModel):
     restaurant_name: str
     subdomain: str
+    user_id: str = Field(min_length=1, max_length=128)
     items: list[OrderItemRequest] = Field(min_length=1)
+
+
+def require_menu_service_key(
+    x_menu_service_key: str | None = Header(default=None),
+) -> None:
+    """Protect order operations from direct unauthenticated callers."""
+    if len(MENU_SERVICE_API_KEY) < 32:
+        raise HTTPException(
+            status_code=503,
+            detail="Order service authentication is not configured.",
+        )
+    if not isinstance(x_menu_service_key, str) or not hmac.compare_digest(
+        x_menu_service_key,
+        MENU_SERVICE_API_KEY,
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Order service authentication required.",
+        )
+
+
+def _menu_item_is_available(item: dict[str, Any]) -> bool:
+    """Fail closed on explicit or malformed availability metadata."""
+    for field in ("available", "is_available", "is_active"):
+        if field in item and (
+            not isinstance(item[field], bool) or item[field] is False
+        ):
+            return False
+    if "status" in item:
+        if not isinstance(item["status"], str):
+            return False
+        if item["status"].strip().casefold() not in {
+            "available",
+            "active",
+            "in stock",
+            "in_stock",
+        }:
+            return False
+    return True
 
 
 # ------------------------------------------------------------------
@@ -206,7 +256,11 @@ def get_menu(subdomain: str = Query(...)):
 # ------------------------------------------------------------------
 
 @app.get("/health")
-def health_check():
+def health_check(repository: OrderRepository = Depends(get_order_repository)):
+    try:
+        repository.health()
+    except OrderStorageUnavailable as exc:
+        raise HTTPException(status_code=503, detail="Order storage is unavailable.") from exc
     return {
         "status": "ok",
         "service": "menu-backend",
@@ -217,8 +271,16 @@ def health_check():
 # Orders
 # ------------------------------------------------------------------
 
-@app.post("/orders", status_code=201)
-def create_order(order: OrderRequest):
+@app.post(
+    "/orders",
+    status_code=201,
+    dependencies=[Depends(require_menu_service_key)],
+)
+def create_order(
+    order: OrderRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    repository: OrderRepository = Depends(get_order_repository),
+):
     """
     Validate an order against the current menu and persist it
     for local development.
@@ -226,6 +288,29 @@ def create_order(order: OrderRequest):
     Menu prices and variation prices are always authoritative.
     Client-submitted prices are never trusted.
     """
+
+    if not isinstance(idempotency_key, str) or not 8 <= len(idempotency_key) <= 128:
+        raise HTTPException(status_code=400, detail="A valid idempotency key is required.")
+
+    fingerprint = request_fingerprint(order.model_dump(mode="json"))
+    try:
+        replay = repository.get_idempotent_order(
+            user_id=order.user_id,
+            subdomain=order.subdomain,
+            idempotency_key=idempotency_key,
+            fingerprint=fingerprint,
+        )
+    except IdempotencyConflict as exc:
+        _log_order_event("order.idempotency_conflict", level=logging.WARNING)
+        raise HTTPException(
+            status_code=409,
+            detail="The idempotency key was already used for a different order.",
+        ) from exc
+    except (OrderStorageUnavailable, RuntimeError) as exc:
+        raise HTTPException(status_code=503, detail="Order storage is temporarily unavailable.") from exc
+    if replay is not None:
+        _log_order_event("order.idempotent_replay", subdomain=order.subdomain)
+        return replay
 
     logger.info(
         "Order creation requested | restaurant=%s | subdomain=%s | item_count=%s",
@@ -274,6 +359,12 @@ def create_order(order: OrderRequest):
                     f"Unknown item "
                     f"'{submitted_item.item_id}'"
                 ),
+            )
+
+        if not _menu_item_is_available(menu_item):
+            raise HTTPException(
+                status_code=409,
+                detail="Menu item is not currently available",
             )
 
         if submitted_item.title != menu_item["title"]:
@@ -418,7 +509,7 @@ def create_order(order: OrderRequest):
                     ),
                 )
 
-            if authoritative_price < 0:
+            if not isfinite(authoritative_price) or authoritative_price < 0:
                 logger.error(
                     "Negative variation pricing in menu | item_id=%s | variation_id=%s",
                     submitted_item.item_id,
@@ -446,6 +537,12 @@ def create_order(order: OrderRequest):
                     submitted_item.item_id,
                 )
 
+                raise HTTPException(
+                    status_code=400,
+                    detail="Submitted item price is invalid",
+                )
+
+            if not isfinite(submitted_price):
                 raise HTTPException(
                     status_code=400,
                     detail="Submitted item price is invalid",
@@ -502,12 +599,12 @@ def create_order(order: OrderRequest):
                 )
 
             try:
-                submitted_price = float(
-                    submitted_item.base_price
-                )
+                submitted_price = float(submitted_item.base_price)
+                authoritative_price = float(menu_item["base_price"])
             except (
                 TypeError,
                 ValueError,
+                KeyError,
             ):
                 logger.warning(
                     "Order rejected: invalid submitted price | item_id=%s",
@@ -519,9 +616,15 @@ def create_order(order: OrderRequest):
                     detail="Submitted item price is invalid",
                 )
 
-            authoritative_price = float(
-                menu_item["base_price"]
-            )
+            if (
+                not isfinite(submitted_price)
+                or not isfinite(authoritative_price)
+                or authoritative_price < 0
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail="Menu item has invalid pricing and cannot be ordered.",
+                )
 
             if submitted_price != authoritative_price:
                 logger.warning(
@@ -549,6 +652,11 @@ def create_order(order: OrderRequest):
             authoritative_price
             * submitted_item.quantity
         )
+        if not isfinite(subtotal) or subtotal > 9_999_999_999.99:
+            raise HTTPException(
+                status_code=422,
+                detail="Order total exceeds the supported range.",
+            )
 
         confirmed_items.append(
             {
@@ -560,28 +668,34 @@ def create_order(order: OrderRequest):
             }
         )
 
-    order_id = (
-        f"ORD-{uuid4().hex[:8].upper()}"
+    try:
+        created_order, replayed = repository.create_order({
+            "restaurant_name": menu["restaurant_name"],
+            "subdomain": order.subdomain,
+            "user_id": order.user_id,
+            "idempotency_key": idempotency_key,
+            "request_fingerprint": fingerprint,
+            "items": confirmed_items,
+            "subtotal": round(subtotal, 2),
+        })
+    except IdempotencyConflict as exc:
+        _log_order_event("order.idempotency_conflict", level=logging.WARNING)
+        raise HTTPException(
+            status_code=409,
+            detail="The idempotency key was already used for a different order.",
+        ) from exc
+    except (OrderStorageUnavailable, RuntimeError) as exc:
+        _log_order_event("order.persistence_failure", level=logging.ERROR, subdomain=order.subdomain)
+        raise HTTPException(
+            status_code=503,
+            detail="Order storage is temporarily unavailable.",
+        ) from exc
+
+    _log_order_event(
+        "order.idempotent_replay" if replayed else "order.accepted",
+        subdomain=order.subdomain,
+        item_count=len(confirmed_items),
     )
-
-    created_order = {
-        "order_id": order_id,
-        "restaurant_name": menu["restaurant_name"],
-        "subdomain": order.subdomain,
-        "items": confirmed_items,
-        "subtotal": subtotal,
-        "status": "confirmed",
-    }
-
-    ORDERS[order_id] = created_order
-
-    logger.info(
-        "Order created successfully | order_id=%s | subtotal=%.2f | item_count=%s",
-        order_id,
-        subtotal,
-        len(confirmed_items),
-    )
-
     return created_order
 
 
@@ -589,29 +703,30 @@ def create_order(order: OrderRequest):
 # Order status
 # ------------------------------------------------------------------
 
-@app.get("/orders/{order_id}")
-def get_order(order_id: str, subdomain: str = Query(..., min_length=1)):
-    order = ORDERS.get(order_id)
+@app.get(
+    "/orders/{order_id}",
+    dependencies=[Depends(require_menu_service_key)],
+)
+def get_order(
+    order_id: str,
+    subdomain: str = Query(..., min_length=1),
+    user_id: str = Query(..., min_length=1, max_length=128),
+    repository: OrderRepository = Depends(get_order_repository),
+):
+    try:
+        order = repository.get_order(order_id, user_id=user_id, subdomain=subdomain)
+    except OrderStorageUnavailable as exc:
+        raise HTTPException(status_code=503, detail="Order storage is temporarily unavailable.") from exc
 
     if order is None:
-        logger.warning(
-            "Order lookup failed: order not found | order_id=%s",
-            order_id,
-        )
+        _log_order_event("order.lookup_not_found", level=logging.WARNING)
 
         raise HTTPException(
             status_code=404,
             detail="Order not found",
         )
 
-    if not subdomain.strip() or order.get("subdomain") != subdomain:
-        raise HTTPException(status_code=404, detail="Order not found")
-
-    logger.info(
-        "Order retrieved | order_id=%s | status=%s",
-        order_id,
-        order["status"],
-    )
+    _log_order_event("order.status_retrieved", status=order["status"])
 
     return order
 
@@ -620,46 +735,42 @@ def get_order(order_id: str, subdomain: str = Query(..., min_length=1)):
 # Order cancellation
 # ------------------------------------------------------------------
 
-@app.delete("/orders/{order_id}")
-def cancel_order(order_id: str, subdomain: str = Query(..., min_length=1)):
+@app.delete(
+    "/orders/{order_id}",
+    dependencies=[Depends(require_menu_service_key)],
+)
+def cancel_order(
+    order_id: str,
+    subdomain: str = Query(..., min_length=1),
+    user_id: str = Query(..., min_length=1, max_length=128),
+    repository: OrderRepository = Depends(get_order_repository),
+):
     """
     Cancel an existing order while retaining it
     for later status lookup.
     """
 
-    order = ORDERS.get(order_id)
+    try:
+        order = repository.get_order(order_id, user_id=user_id, subdomain=subdomain)
+    except OrderStorageUnavailable as exc:
+        raise HTTPException(status_code=503, detail="Order storage is temporarily unavailable.") from exc
 
     if order is None:
-        logger.warning(
-            "Order cancellation failed: order not found | order_id=%s",
-            order_id,
-        )
+        _log_order_event("order.cancellation_not_found", level=logging.WARNING)
 
         raise HTTPException(
             status_code=404,
             detail="Order not found",
         )
 
-    if not subdomain.strip() or order.get("subdomain") != subdomain:
+    try:
+        order = repository.cancel_order(order_id, user_id=user_id, subdomain=subdomain)
+    except OrderStorageUnavailable as exc:
+        raise HTTPException(status_code=503, detail="Order storage is temporarily unavailable.") from exc
+    if order is None:
         raise HTTPException(status_code=404, detail="Order not found")
 
-    if order["status"] == "cancelled":
-        logger.warning(
-            "Order cancellation rejected: already cancelled | order_id=%s",
-            order_id,
-        )
-
-        raise HTTPException(
-            status_code=400,
-            detail="Order is already cancelled",
-        )
-
-    order["status"] = "cancelled"
-
-    logger.info(
-        "Order cancelled | order_id=%s",
-        order_id,
-    )
+    _log_order_event("order.cancellation_confirmed", subdomain=subdomain)
 
     return order
 

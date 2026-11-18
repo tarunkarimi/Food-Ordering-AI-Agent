@@ -5,6 +5,7 @@ uses a real HTTP connection to a temporary instance of the menu backend.
 """
 
 import importlib.util
+import os
 import socket
 import sys
 import threading
@@ -16,12 +17,16 @@ from unittest.mock import patch
 import pytest
 import requests
 import uvicorn
+from sqlalchemy.engine import make_url
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.graph import END, START, StateGraph
 
 from src.agents.nodes.tool_node import tool_node
 from src.agents.state import Cart, OrderState
 from src.configs.config import config
+from src.db.database import SessionLocal
+from src.db.models import User
+from sqlalchemy import delete
 
 
 def _load_menu_backend():
@@ -30,6 +35,9 @@ def _load_menu_backend():
         / "menu-backend"
         / "main.py"
     )
+    menu_directory = str(main_path.parent)
+    if menu_directory not in sys.path:
+        sys.path.insert(0, menu_directory)
 
     spec = importlib.util.spec_from_file_location(
         "integration_menu_backend",
@@ -57,8 +65,34 @@ def _available_port():
 
 @pytest.fixture
 def menu_backend(monkeypatch):
+    if os.getenv("CI", "").casefold() != "true":
+        pytest.fail("Order lifecycle persistence integration is CI-only.")
+    menu_url = os.getenv("MENU_DATABASE_URL", "")
+    test_url = os.getenv("TEST_DATABASE_URL", "")
+    menu_test_name = os.getenv("MENU_TEST_DATABASE_NAME", "")
+    if (
+        not menu_test_name
+        or menu_test_name != os.getenv("TEST_DATABASE_NAME")
+        or os.getenv("MENU_TEST_DATABASE_CONFIRMATION")
+        != f"I_ACKNOWLEDGE_TEST_DATABASE:{menu_test_name}"
+    ):
+        pytest.fail("The menu integration database requires its own matching CI test designation.")
+    try:
+        menu_target = make_url(menu_url)
+        test_target = make_url(test_url)
+    except Exception:
+        pytest.fail("The menu integration database must match the designated CI database.")
+    if (
+        not menu_target.host
+        or menu_target.get_backend_name() not in {"postgres", "postgresql"}
+        or (menu_target.host, menu_target.port or 5432, menu_target.database)
+        != (test_target.host, test_target.port or 5432, test_target.database)
+        or test_target.database != os.getenv("TEST_DATABASE_NAME")
+        or os.getenv("TEST_DATABASE_CONFIRMATION")
+        != f"I_ACKNOWLEDGE_TEST_DATABASE:{os.getenv('TEST_DATABASE_NAME', '')}"
+    ):
+        pytest.fail("The menu integration database must match the designated CI test database.")
     menu = _load_menu_backend()
-    menu.ORDERS.clear()
 
     port = _available_port()
 
@@ -105,10 +139,29 @@ def menu_backend(monkeypatch):
         base_url,
     )
 
-    yield base_url
+    yield SimpleNamespace(url=base_url, module=menu)
 
     server.should_exit = True
     thread.join(timeout=5)
+
+
+@pytest.fixture
+def synthetic_order_user(menu_backend):
+    from tests.test_authenticated_cart import signup_and_login
+
+    user_id, _token = signup_and_login()
+    yield user_id
+
+    repository = menu_backend.module.get_order_repository()
+    import order_storage
+    with repository.sessions() as session, session.begin():
+        session.execute(delete(order_storage.MenuOrder).where(
+            order_storage.MenuOrder.user_id == str(user_id)
+        ))
+    repository.engine.dispose()
+    with SessionLocal() as db:
+        db.execute(delete(User).where(User.id == user_id))
+        db.commit()
 
 
 @pytest.fixture
@@ -150,7 +203,7 @@ def invoke_tool(
     return graph.invoke(state)
 
 
-def initial_state():
+def initial_state(user_id):
     return {
         "messages": [],
         "cart": Cart(items=[]),
@@ -162,7 +215,7 @@ def initial_state():
         # Tools require the authenticated graph owner before they inspect or
         # call the order backend. This synthetic identity is isolated to this
         # in-process integration test.
-        "user_id": 990001,
+        "user_id": user_id,
         "finished": False,
     }
 
@@ -170,8 +223,9 @@ def initial_state():
 def test_order_lifecycle_over_real_menu_backend(
     menu_backend,
     tool_graph,
+    synthetic_order_user,
 ):
-    state = initial_state()
+    state = initial_state(synthetic_order_user)
 
     # 1. The agent's registered add_cart tool builds the cart.
     # Chicken Biryani has variations, so the test explicitly selects Regular.
@@ -354,8 +408,9 @@ def test_order_lifecycle_over_real_menu_backend(
 def test_new_order_can_be_placed_after_completed_order(
     menu_backend,
     tool_graph,
+    synthetic_order_user,
 ):
-    state = initial_state()
+    state = initial_state(synthetic_order_user)
 
     # First order.
     state = invoke_tool(

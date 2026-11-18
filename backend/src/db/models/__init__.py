@@ -4,6 +4,7 @@ from src.db.models.ai_memory import UserAIMemory
 from src.db.models.cart import Cart, CartItem
 from src.db.models.login_attempt import LoginAttempt
 from src.db.models.order_history import OrderHistory
+from src.db.models.order_operation import OrderOperation
 from src.db.models.ordering_intelligence import (
     UserOrderingItemStat,
     UserOrderingProfile,
@@ -21,6 +22,7 @@ __all__ = [
     "CartItem",
     "LoginAttempt",
     "OrderHistory",
+    "OrderOperation",
     "User",
     "UserAIMemory",
     "UserOrderingItemStat",

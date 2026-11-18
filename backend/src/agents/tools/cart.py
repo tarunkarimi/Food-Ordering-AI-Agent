@@ -1,4 +1,17 @@
 import requests
+import hashlib
+import logging
+from src.db.database import SessionLocal
+from src.services.order_history import create_order_history
+from src.services.order_operations import (
+    OperationConflict,
+    begin_operation,
+    fingerprint,
+    mark_operation_complete,
+    mark_operation_retryable,
+    mark_upstream_confirmed,
+    operation_response,
+)
 from src.configs.config import config
 from langchain_core.tools import tool, InjectedToolCallId
 from langgraph.types import Command
@@ -13,6 +26,11 @@ from src.agents.state import (
 )
 from langgraph.prebuilt import InjectedState
 from src.services.http_resilience import request_read_with_retry
+from src.services.menu_backend import menu_service_headers
+from src.observability import log_event
+
+
+logger = logging.getLogger(__name__)
 
 
 def _menu_url(subdomain: str) -> str:
@@ -90,6 +108,108 @@ def _failure(message: str, tool_call_id: str) -> Command:
             ]
         }
     )
+
+
+def _place_order_with_outbox(
+    *,
+    payload: dict,
+    idempotency_key: str,
+    order_url: str,
+) -> tuple[dict, int]:
+    """Persist an authenticated tool checkout intent and reconcile its result."""
+    user_id = int(payload["user_id"])
+    total_items = sum(item["quantity"] for item in payload["items"])
+    with SessionLocal() as db:
+        operation = begin_operation(
+            db,
+            user_id=user_id,
+            operation_type="chat_checkout",
+            idempotency_key=idempotency_key,
+            order_id=None,
+            subdomain=payload["subdomain"],
+            payload=payload,
+        )
+        log_event(
+            logger,
+            "agent_checkout.intent_created" if operation.attempts == 1 else "agent_checkout.reconciliation_attempt",
+            operation_id=operation.id,
+            attempt=operation.attempts,
+        )
+        if operation.status in {"completed", "upstream_confirmed"}:
+            result = operation_response(operation)
+        else:
+            try:
+                # The intent is durable; release the read transaction before
+                # making a potentially slow network call.
+                db.commit()
+                log_event(logger, "agent_checkout.upstream_attempt", operation_id=operation.id)
+                response = requests.post(
+                    order_url,
+                    json=payload,
+                    headers={
+                        **menu_service_headers(),
+                        "Idempotency-Key": idempotency_key,
+                    },
+                    timeout=10,
+                )
+                response.raise_for_status()
+                result = response.json()
+                if not isinstance(result, dict):
+                    raise ValueError("Order API response is malformed")
+                if (
+                    not isinstance(result.get("order_id"), str)
+                    or result.get("status") != "confirmed"
+                    or not _valid_price(result.get("subtotal"))
+                ):
+                    raise ValueError("Order API response is invalid")
+                mark_upstream_confirmed(
+                    db,
+                    operation,
+                    order_id=result["order_id"],
+                    response=result,
+                )
+                log_event(logger, "agent_checkout.upstream_accepted", operation_id=operation.id)
+            except requests.Timeout:
+                mark_operation_retryable(db, operation, error_code="upstream_timeout")
+                log_event(logger, "agent_checkout.retryable_failure", level=logging.WARNING, operation_id=operation.id, error_type="timeout")
+                raise
+            except requests.ConnectionError:
+                mark_operation_retryable(db, operation, error_code="upstream_unavailable")
+                log_event(logger, "agent_checkout.retryable_failure", level=logging.WARNING, operation_id=operation.id, error_type="connection")
+                raise
+            except requests.RequestException:
+                mark_operation_retryable(db, operation, error_code="upstream_error")
+                log_event(logger, "agent_checkout.retryable_failure", level=logging.WARNING, operation_id=operation.id, error_type="request")
+                raise
+            except (ValueError, TypeError, AttributeError):
+                mark_operation_retryable(db, operation, error_code="invalid_upstream_response")
+                log_event(logger, "agent_checkout.retryable_failure", level=logging.WARNING, operation_id=operation.id, error_type="invalid_response")
+                raise
+
+        if not isinstance(result, dict):
+            raise RuntimeError("Order result is pending reconciliation")
+        order_id = result["order_id"]
+        try:
+            create_order_history(
+                db,
+                user_id=user_id,
+                order_id=order_id,
+                restaurant_name=payload["restaurant_name"],
+                subdomain=payload["subdomain"],
+                status=result["status"],
+                subtotal=float(result["subtotal"]),
+                total_items=total_items,
+                items=payload["items"],
+            )
+            operation.order_id = order_id
+            mark_operation_complete(db, operation, response=result, commit=False)
+            db.commit()
+        except Exception:
+            db.rollback()
+            log_event(logger, "agent_checkout.reconciliation_failure", level=logging.ERROR, operation_id=operation.id)
+            raise
+        log_event(logger, "agent_checkout.reconciliation_succeeded", operation_id=operation.id)
+        return result, total_items
 
 
 def _valid_quantity(quantity: object) -> bool:
@@ -848,98 +968,54 @@ def place_order(
     payload = {
         "restaurant_name": state["restaurant_name"],
         "subdomain": state["subdomain"],
+        "user_id": str(state.get("user_id") or ""),
         "items": order_items,
     }
 
+    user_id = state.get("user_id")
+    if user_id is None or not str(user_id).strip():
+        return _failure("An authenticated user is required before placing an order.", tool_call_id)
+    intent_fingerprint = fingerprint(payload)
+    idempotency_key = "agent-" + hashlib.sha256(
+        f"{user_id}:{state.get('orderId') or 'new'}:{intent_fingerprint}".encode("utf-8")
+    ).hexdigest()
+
     try:
-
-        response = requests.post(
-            order_url,
-            json=payload,
-            timeout=10
+        result, total_items = _place_order_with_outbox(
+            payload=payload,
+            idempotency_key=idempotency_key,
+            order_url=order_url,
         )
-
-        response.raise_for_status()
-
-        result = response.json()
-
-        if not isinstance(result, dict):
-            raise ValueError(
-                "Order API response is malformed"
-            )
-
-        order_id = result.get("order_id")
-        status = result.get("status")
-        subtotal = result.get("subtotal")
-
-        if (
-            not isinstance(order_id, str)
-            or not order_id
-            or status != "confirmed"
-        ):
-            raise ValueError(
-                "Order API response did not include a valid order_id"
-            )
-
-        if not _valid_price(subtotal):
-            raise ValueError(
-                "Order API response included an invalid subtotal"
-            )
-
-    except requests.Timeout:
-
-        error_message = (
-            "Unable to place order: the ordering service "
-            "timed out. Please try again."
-        )
-
-    except requests.ConnectionError:
-
-        error_message = (
-            "Unable to place order: the ordering service "
-            "is unavailable. Please try again."
-        )
-
-    except requests.RequestException as exc:
-
-        error_message = (
-            "Unable to place order: the ordering service "
-            f"returned an error ({exc})."
-        )
-
-    except (ValueError, TypeError, AttributeError):
-
-        error_message = (
-            "Unable to place order: the ordering service "
-            "returned an invalid response."
-        )
-
-    else:
-
-        total_items = sum(
-            unit.quantity
-            for item in current_cart.items
-            for unit in item.units
-        )
-
+        order_id = result["order_id"]
+        status = result["status"]
+        subtotal = result["subtotal"]
         return Command(
             update={
                 "cart": Cart(items=[]),
                 "orderId": order_id,
                 "order_status": status,
+                "order_history_persisted": True,
                 "order_confirmation_pending": False,
                 "finished": True,
                 "messages": [
                     ToolMessage(
-                        f"Order {order_id} confirmed! "
-                        f"Total: {subtotal}. "
-                        f"Total items: {total_items}. "
-                        "Thank you for your order!",
-                        tool_call_id=tool_call_id
+                        f"Order {order_id} confirmed! Total: {subtotal}. "
+                        f"Total items: {total_items}. Thank you for your order!",
+                        tool_call_id=tool_call_id,
                     )
-                ]
+                ],
             }
         )
+    except requests.Timeout:
+        error_message = "The ordering service timed out. Retry the confirmed cart; the same checkout intent will be reused."
+    except requests.ConnectionError:
+        error_message = "The ordering service is unavailable. Retry the confirmed cart; the same checkout intent will be reused."
+    except requests.RequestException:
+        error_message = "The ordering service returned an error. Retry the confirmed cart; the same checkout intent will be reused."
+    except OperationConflict:
+        error_message = "This checkout intent conflicts with an existing order request. Please contact support before retrying."
+    except Exception:
+        error_message = "The order was accepted or is being reconciled, but the result could not be saved. Retry the same confirmed cart."
 
     # ---------------------------------------------------------
     # 6. Return API failure without corrupting existing state

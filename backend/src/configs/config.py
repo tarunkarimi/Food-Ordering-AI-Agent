@@ -9,6 +9,7 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 
 class Config(BaseSettings):
     MENU_BACKEND_URL: str
+    MENU_SERVICE_API_KEY: str = Field(min_length=32)
     PORT: int
     GOOGLE_API_KEY: str
     DATABASE_URL: str

@@ -62,7 +62,36 @@ The system implements a state-based conversational agent that:
    ```env
    GOOGLE_API_KEY=your_google_api_key
    MENU_BACKEND_URL=your_menu_service_url
+   MENU_SERVICE_API_KEY=generate-a-unique-secret-at-least-32-characters-long
+   DATABASE_URL=backend-runtime-database-url
    ```
+
+   Configure the same high-entropy `MENU_SERVICE_API_KEY` on the AI backend and
+   menu backend. It protects order creation, status, and cancellation endpoints;
+   the public menu and health endpoints do not require it. Store the value in
+   the deployment secret manager and never commit it. Render requires this
+   variable to be configured separately on both services before order
+   operations are available.
+
+   The menu service uses separate PostgreSQL settings: `MENU_DATABASE_URL`
+   for runtime access and `MENU_MIGRATION_DATABASE_URL` for schema changes.
+   Both use the existing shared PostgreSQL infrastructure, while menu orders
+   live in the menu-owned `menu_backend` schema. Prefer distinct database
+   roles: grant the runtime role only schema usage and required table DML; use
+   the migration role for schema/table creation. The menu service does not
+   read or write AI backend ORM tables.
+
+   Apply schema changes once as an explicit release step before routing traffic;
+   application replicas do not run migrations at startup:
+
+   ```powershell
+   cd menu-backend
+   python -m alembic upgrade head
+   ```
+
+   Inject `MENU_MIGRATION_DATABASE_URL` through the deployment secret manager
+   for that command. Migrate the AI schema separately with
+   `cd backend; uv run alembic upgrade head`.
 
 4. **Run the application**
 

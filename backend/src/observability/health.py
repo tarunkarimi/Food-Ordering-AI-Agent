@@ -20,13 +20,16 @@ _cached_at = 0.0
 
 
 def check_database() -> dict[str, Any]:
-    """Check whether the application database is reachable."""
+    """Check database connectivity and the required order-operation schema."""
 
     try:
         db = SessionLocal()
 
         try:
             db.execute(text("SELECT 1"))
+            # Readiness must fail until the outbox migration exists. The
+            # liveness endpoint remains independent of database readiness.
+            db.execute(text("SELECT 1 FROM order_operations LIMIT 0"))
 
             return {
                 "status": "ok",

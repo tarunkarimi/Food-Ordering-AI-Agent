@@ -1,5 +1,8 @@
 from unittest.mock import MagicMock, patch
 
+from fastapi.testclient import TestClient
+
+from src.main import app
 import src.observability.health as health
 
 
@@ -18,7 +21,8 @@ def test_database_check_returns_ok():
         result = health.check_database()
 
     assert result == {"status": "ok"}
-    session.execute.assert_called_once()
+    assert session.execute.call_count == 2
+    assert "order_operations" in session.execute.call_args_list[1].args[0].text
     session.close.assert_called_once()
 
 
@@ -109,3 +113,15 @@ def test_readiness_cache_expires():
     assert cached["status"] == "ready"
     assert expired["status"] == "not_ready"
     assert check.call_count == 2
+
+
+def test_readiness_endpoint_returns_service_unavailable_until_migrations_are_ready():
+    client = TestClient(app)
+    with patch(
+        "src.main.get_readiness",
+        return_value={"status": "not_ready", "checks": {"database": {"status": "error"}}},
+    ):
+        response = client.get("/ready")
+
+    assert response.status_code == 503
+    assert response.json()["status"] == "not_ready"

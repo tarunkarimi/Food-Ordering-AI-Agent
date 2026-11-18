@@ -32,6 +32,11 @@ jobs:
       CI: "true"
       PORT: "8000"
       MENU_BACKEND_URL: "http://localhost:8001"
+      MENU_SERVICE_API_KEY: "synthetic-menu-service-key-minimum-32-characters"
+      MENU_DATABASE_URL: "postgresql+psycopg://postgres:postgres@localhost:5432/food_ordering_ci"
+      MENU_MIGRATION_DATABASE_URL: "postgresql+psycopg://postgres:postgres@localhost:5432/food_ordering_ci"
+      MENU_TEST_DATABASE_NAME: "food_ordering_ci"
+      MENU_TEST_DATABASE_CONFIRMATION: "I_ACKNOWLEDGE_TEST_DATABASE:food_ordering_ci"
       GOOGLE_API_KEY: "ci-test-key"
       DATABASE_URL: "postgresql+psycopg://postgres:postgres@localhost:5432/food_ordering_ci"
       TEST_DATABASE_URL: "postgresql+psycopg://postgres:postgres@localhost:5432/food_ordering_ci"
@@ -61,6 +66,10 @@ jobs:
 
       - name: Apply database migrations
         run: uv run alembic upgrade head
+
+      - name: Apply menu-backend migrations for lifecycle integration
+        working-directory: menu-backend
+        run: uv run --project ../backend python -m alembic upgrade head
 
       - name: Compile backend
         run: uv run python -m compileall src -q

@@ -36,6 +36,11 @@ jobs:
       CI: "true"
       PORT: "8000"
       MENU_BACKEND_URL: "http://localhost:8001"
+      MENU_SERVICE_API_KEY: "synthetic-menu-service-key-minimum-32-characters"
+      MENU_DATABASE_URL: "postgresql+psycopg://postgres:postgres@localhost:5432/food_ordering_ci"
+      MENU_MIGRATION_DATABASE_URL: "postgresql+psycopg://postgres:postgres@localhost:5432/food_ordering_ci"
+      MENU_TEST_DATABASE_NAME: "food_ordering_ci"
+      MENU_TEST_DATABASE_CONFIRMATION: "I_ACKNOWLEDGE_TEST_DATABASE:food_ordering_ci"
       GOOGLE_API_KEY: "ci-test-key"
       DATABASE_URL: "postgresql+psycopg://postgres:postgres@localhost:5432/food_ordering_ci"
       TEST_DATABASE_URL: "postgresql+psycopg://postgres:postgres@localhost:5432/food_ordering_ci"
@@ -66,6 +71,10 @@ jobs:
       - name: Apply database migrations
         run: uv run alembic upgrade head
 
+      - name: Apply menu-backend migrations for lifecycle integration
+        working-directory: menu-backend
+        run: uv run --project ../backend python -m alembic upgrade head
+
       - name: Compile backend
         run: uv run python -m compileall src -q
 
@@ -91,6 +100,15 @@ jobs:
           tests/test_personalization_prompt.py -q
       - name: Run order status unit tests
         run: uv run pytest tests/test_order_status.py -q
+
+      - name: Run authenticated checkout persistence tests
+        run: uv run pytest tests/test_authenticated_checkout.py -q
+
+      - name: Run authenticated AI cart persistence tests
+        run: uv run pytest tests/test_ai_cart_persistence.py -q
+
+      - name: Run in-process order lifecycle integration
+        run: uv run pytest tests/test_order_lifecycle_integration.py -q
       - name: Run database safety tests
         run: uv run pytest tests/test_db_test_safety.py -q
 
@@ -151,9 +169,32 @@ jobs:
     name: Menu Backend Validation
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: food_ordering_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d food_ordering_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     defaults:
       run:
         working-directory: menu-backend
+
+    env:
+      CI: "true"
+      MENU_SERVICE_API_KEY: "synthetic-menu-service-key-minimum-32-characters"
+      MENU_DATABASE_URL: "postgresql+psycopg://postgres:postgres@localhost:5432/food_ordering_ci"
+      MENU_MIGRATION_DATABASE_URL: "postgresql+psycopg://postgres:postgres@localhost:5432/food_ordering_ci"
+      MENU_TEST_DATABASE_NAME: "food_ordering_ci"
+      MENU_TEST_DATABASE_CONFIRMATION: "I_ACKNOWLEDGE_TEST_DATABASE:food_ordering_ci"
 
     steps:
       - name: Checkout
@@ -170,8 +211,14 @@ jobs:
       - name: Compile menu backend
         run: python -m compileall main.py -q
 
+      - name: Apply menu-backend migrations
+        run: python -m alembic upgrade head
+
       - name: Run menu backend tests
-        run: python -m pytest -q
+        run: python -m pytest -q --ignore=test_order_storage_integration.py
+
+      - name: Run PostgreSQL order persistence tests
+        run: python -m pytest -q test_order_storage_integration.py
 
   docker:
     name: Docker Builds

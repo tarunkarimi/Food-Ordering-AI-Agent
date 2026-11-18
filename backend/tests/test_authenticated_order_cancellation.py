@@ -30,6 +30,10 @@ def _owned_order(order_id="order-123"):
     )
 
 
+def _pending_operation():
+    return SimpleNamespace(status="pending", id=1)
+
+
 def test_authenticated_order_cancellation_succeeds():
     app.dependency_overrides[get_current_session] = (
         _authenticated_session
@@ -39,6 +43,9 @@ def test_authenticated_order_cancellation_succeeds():
         with (
             patch("src.api.routes.cart.get_order_history", return_value=_owned_order()),
             patch("src.api.routes.cart.update_order_history_status"),
+            patch("src.api.routes.cart.begin_operation", return_value=_pending_operation()),
+            patch("src.api.routes.cart.mark_upstream_confirmed"),
+            patch("src.api.routes.cart.mark_operation_complete"),
             patch("src.api.routes.cart.requests.delete") as mock_delete,
         ):
             response = Mock()
@@ -65,7 +72,7 @@ def test_authenticated_order_cancellation_succeeds():
         }
 
         mock_delete.assert_called_once()
-        assert mock_delete.call_args.kwargs["params"] == {"subdomain": "test"}
+        assert mock_delete.call_args.kwargs["params"] == {"subdomain": "test", "user_id": "123"}
 
     finally:
         app.dependency_overrides.clear()
@@ -99,6 +106,7 @@ def test_authenticated_order_cancellation_not_found():
     try:
         with (
             patch("src.api.routes.cart.get_order_history", return_value=_owned_order("missing-order")),
+            patch("src.api.routes.cart.begin_operation", return_value=_pending_operation()),
             patch("src.api.routes.cart.requests.delete") as mock_delete,
         ):
             response = Mock()
@@ -135,6 +143,8 @@ def test_cancellation_rejects_invalid_upstream_identity_without_updating_history
         with (
             patch("src.api.routes.cart.get_order_history", return_value=_owned_order()),
             patch("src.api.routes.cart.update_order_history_status") as update_status,
+            patch("src.api.routes.cart.begin_operation", return_value=_pending_operation()),
+            patch("src.api.routes.cart.mark_upstream_confirmed"),
             patch("src.api.routes.cart.requests.delete") as mock_delete,
         ):
             response = Mock()
@@ -177,6 +187,8 @@ def test_authenticated_order_cancellation_service_failure():
 
         with (
             patch("src.api.routes.cart.get_order_history", return_value=_owned_order()),
+            patch("src.api.routes.cart.begin_operation", return_value=_pending_operation()),
+            patch("src.api.routes.cart.mark_operation_retryable"),
             patch("src.api.routes.cart.requests.delete") as mock_delete,
         ):
             mock_delete.side_effect = (
@@ -266,6 +278,70 @@ def test_cancellation_updates_persistent_order_history():
                 OrderHistory.user_id == user_id,
             ).one()
 
+            assert history.status == "cancelled"
+    finally:
+        with SessionLocal() as db:
+            db.execute(delete(User).where(User.id == user_id))
+            db.commit()
+
+
+def test_cancellation_retry_reconciles_local_history_without_second_delete():
+    user_id, token = signup_and_login()
+    order_id = f"history-cancel-reconcile-{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        with SessionLocal() as db:
+            db.add(OrderHistory(
+                user_id=user_id,
+                order_id=order_id,
+                restaurant_name="Test Restaurant",
+                subdomain="test",
+                status="confirmed",
+                subtotal=220.0,
+                total_items=1,
+                items_json='[{"item_id":"item-001","title":"Synthetic item","quantity":1,"base_price":220.0,"variation":null}]',
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+            ))
+            db.commit()
+
+        from unittest.mock import patch
+        from fastapi.testclient import TestClient
+        from src.api.routes import cart as cart_route
+        from src.main import app
+
+        client = TestClient(app)
+        original_update = cart_route.update_order_history_status
+        response_body = {
+            "order_id": order_id,
+            "restaurant_name": "Test Restaurant",
+            "subdomain": "test",
+            "status": "cancelled",
+        }
+        with (
+            patch.object(
+                cart_route,
+                "update_order_history_status",
+                side_effect=[RuntimeError("synthetic local persistence failure"), original_update],
+            ),
+            patch("src.api.routes.cart.requests.delete") as mock_delete,
+        ):
+            mock_delete.return_value.status_code = 200
+            mock_delete.return_value.json.return_value = response_body
+            mock_delete.return_value.raise_for_status.return_value = None
+
+            first = client.delete(f"/api/cart/orders/{order_id}", headers=auth_headers(token))
+            retry = client.delete(f"/api/cart/orders/{order_id}", headers=auth_headers(token))
+
+        assert first.status_code == 503
+        assert retry.status_code == 200
+        assert retry.json()["status"] == "cancelled"
+        mock_delete.assert_called_once()
+        with SessionLocal() as db:
+            history = db.query(OrderHistory).filter(
+                OrderHistory.order_id == order_id,
+                OrderHistory.user_id == user_id,
+            ).one()
             assert history.status == "cancelled"
     finally:
         with SessionLocal() as db:

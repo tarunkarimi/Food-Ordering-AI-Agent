@@ -4,6 +4,7 @@ import logging
 
 import uvicorn
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.router import api_router
@@ -64,7 +65,9 @@ def create_app() -> FastAPI:
 
     @app.get("/ready")
     def readiness():
-        return get_readiness()
+        result = get_readiness()
+        status_code = 200 if result.get("status") == "ready" else 503
+        return JSONResponse(status_code=status_code, content=result)
 
     @app.get("/health")
     def health_check():

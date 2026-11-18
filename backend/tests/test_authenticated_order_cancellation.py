@@ -31,7 +31,7 @@ def _owned_order(order_id="order-123"):
 
 
 def _pending_operation():
-    return SimpleNamespace(status="pending", id=1)
+    return SimpleNamespace(status="pending", id=1, attempts=1)
 
 
 def test_authenticated_order_cancellation_succeeds():
@@ -312,6 +312,20 @@ def test_cancellation_retry_reconciles_local_history_without_second_delete():
 
         client = TestClient(app)
         original_update = cart_route.update_order_history_status
+        update_attempts = 0
+
+        def fail_once_then_update(db, *, user_id, order_id, status):
+            nonlocal update_attempts
+            update_attempts += 1
+            if update_attempts == 1:
+                raise RuntimeError("synthetic local persistence failure")
+            return original_update(
+                db,
+                user_id=user_id,
+                order_id=order_id,
+                status=status,
+            )
+
         response_body = {
             "order_id": order_id,
             "restaurant_name": "Test Restaurant",
@@ -322,7 +336,7 @@ def test_cancellation_retry_reconciles_local_history_without_second_delete():
             patch.object(
                 cart_route,
                 "update_order_history_status",
-                side_effect=[RuntimeError("synthetic local persistence failure"), original_update],
+                side_effect=fail_once_then_update,
             ),
             patch("src.api.routes.cart.requests.delete") as mock_delete,
         ):

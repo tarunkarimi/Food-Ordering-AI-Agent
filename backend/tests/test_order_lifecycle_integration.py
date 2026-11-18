@@ -358,7 +358,12 @@ def test_order_lifecycle_over_real_menu_backend(
     # making an upstream request. Keep this in-process integration test
     # database-independent while exercising the real menu backend's 404 path.
     with (
-        patch("src.agents.tools.order.SessionLocal") as session_local,
+        patch("src.agents.tools.order.SessionLocal"),
+        patch(
+            "src.agents.tools.order.begin_operation",
+            return_value=SimpleNamespace(status="pending", attempts=1, id=1),
+        ),
+        patch("src.agents.tools.order.mark_operation_retryable"),
         patch(
             "src.agents.tools.order.get_order_history",
             return_value=SimpleNamespace(
@@ -368,7 +373,6 @@ def test_order_lifecycle_over_real_menu_backend(
             ),
         ),
     ):
-        session_local.return_value.__enter__.return_value = object()
         state = invoke_tool(
             tool_graph,
             state,

@@ -27,6 +27,7 @@ from src.agents.state import (
 from langgraph.prebuilt import InjectedState
 from src.services.http_resilience import request_read_with_retry
 from src.services.menu_backend import menu_service_headers
+from src.services.ordering_intelligence import is_menu_item_available
 from src.observability import log_event
 
 
@@ -157,7 +158,7 @@ def _place_order_with_outbox(
                 if not isinstance(result, dict):
                     raise ValueError("Order API response is malformed")
                 if (
-                    not isinstance(result.get("order_id"), str)
+                    not _valid_order_id(result.get("order_id"))
                     or result.get("status") != "confirmed"
                     or not _valid_price(result.get("subtotal"))
                 ):
@@ -228,6 +229,10 @@ def _valid_price(price: object) -> bool:
         and price not in (float("inf"), float("-inf"))
         and price >= 0
     )
+
+
+def _valid_order_id(order_id: object) -> bool:
+    return isinstance(order_id, str) and bool(order_id.strip())
 
 
 @tool
@@ -302,6 +307,12 @@ def add_cart(
         return _failure(
             "That item is not available on the current menu.",
             tool_call_id
+        )
+
+    if not is_menu_item_available(menu_item):
+        return _failure(
+            "That menu item is not currently available.",
+            tool_call_id,
         )
 
     # ---------------------------------------------------------
@@ -818,6 +829,12 @@ def place_order(
     """
 
     current_cart = state.get("cart")
+    log_event(
+        logger,
+        "agent_checkout.validation_started",
+        authenticated=state.get("user_id") is not None,
+        cart_line_count=len(current_cart.items) if current_cart is not None else 0,
+    )
 
     # ---------------------------------------------------------
     # 1. Require confirm_order
@@ -894,6 +911,13 @@ def place_order(
     # lookup while a newly populated cart starts a new order.
     # ---------------------------------------------------------
     if current_cart is None or not current_cart.items:
+        log_event(
+            logger,
+            "agent_checkout.validation_failed",
+            level=logging.WARNING,
+            reason_code="empty_cart",
+            authenticated=state.get("user_id") is not None,
+        )
 
         return Command(
             update={
@@ -974,6 +998,13 @@ def place_order(
 
     user_id = state.get("user_id")
     if user_id is None or not str(user_id).strip():
+        log_event(
+            logger,
+            "agent_checkout.validation_failed",
+            level=logging.WARNING,
+            reason_code="authentication_required",
+            authenticated=False,
+        )
         return _failure("An authenticated user is required before placing an order.", tool_call_id)
     intent_fingerprint = fingerprint(payload)
     idempotency_key = "agent-" + hashlib.sha256(
@@ -986,6 +1017,13 @@ def place_order(
             idempotency_key=idempotency_key,
             order_url=order_url,
         )
+        if (
+            not isinstance(result, dict)
+            or not _valid_order_id(result.get("order_id"))
+            or result.get("status") != "confirmed"
+            or not _valid_price(result.get("subtotal"))
+        ):
+            raise ValueError("Order service response is invalid")
         order_id = result["order_id"]
         status = result["status"]
         subtotal = result["subtotal"]
@@ -1007,15 +1045,33 @@ def place_order(
             }
         )
     except requests.Timeout:
-        error_message = "The ordering service timed out. Retry the confirmed cart; the same checkout intent will be reused."
+        error_message = (
+            "The ordering service timed out before confirming the order. "
+            "Your cart is still saved. Please retry the same confirmation; "
+            "the checkout intent will be reused."
+        )
     except requests.ConnectionError:
-        error_message = "The ordering service is unavailable. Retry the confirmed cart; the same checkout intent will be reused."
+        error_message = (
+            "The ordering service is unavailable, so the order is not confirmed. "
+            "Your cart is still saved. Please retry the same confirmation; "
+            "the checkout intent will be reused."
+        )
     except requests.RequestException:
-        error_message = "The ordering service returned an error. Retry the confirmed cart; the same checkout intent will be reused."
+        error_message = (
+            "The ordering service could not confirm the order. Your cart is still saved. "
+            "Please retry the same confirmation or contact support."
+        )
     except OperationConflict:
-        error_message = "This checkout intent conflicts with an existing order request. Please contact support before retrying."
+        error_message = (
+            "This checkout request conflicts with an earlier request, so I cannot "
+            "confirm it. Your cart is still saved. Please contact support before retrying."
+        )
     except Exception:
-        error_message = "The order was accepted or is being reconciled, but the result could not be saved. Retry the same confirmed cart."
+        error_message = (
+            "The ordering service may have accepted the order, but its confirmation "
+            "could not be saved. Your cart is still saved while the same checkout "
+            "intent is reconciled. Please retry the same confirmation; do not start a new order."
+        )
 
     # ---------------------------------------------------------
     # 6. Return API failure without corrupting existing state

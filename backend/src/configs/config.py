@@ -13,6 +13,7 @@ class Config(BaseSettings):
     PORT: int
     GOOGLE_API_KEY: str
     DATABASE_URL: str
+    MIGRATION_DATABASE_URL: str = ""
 
     # Authentication.
     JWT_SECRET_KEY: str = Field(min_length=32)

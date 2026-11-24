@@ -1,4 +1,4 @@
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.graph import StateGraph, START, END
 from unittest.mock import Mock, patch
 
@@ -547,6 +547,40 @@ def test_add_cart_uses_authoritative_menu_price():
     assert result["cart"].items[0].units[0].base_price == 220.0
 
 
+def test_add_cart_rejects_unavailable_menu_item_without_mutation():
+    state = make_state(Cart(items=[]))
+    unavailable = menu_response(
+        items=[
+            {
+                "id": "item-001",
+                "title": "Chicken Biryani",
+                "base_price": 220.0,
+                "variations": [],
+                "available": False,
+            }
+        ]
+    )
+
+    with patch("src.agents.tools.cart.requests.get", return_value=unavailable):
+        result = run_tool(
+            state,
+            "add_cart",
+            {
+                "item_id": "item-001",
+                "title": "Chicken Biryani",
+                "new_item": {
+                    "key": "item-001|no_variant",
+                    "quantity": 1,
+                    "base_price": 220.0,
+                },
+            },
+            "test-add-unavailable",
+        )
+
+    assert result["cart"].items == []
+    assert "not currently available" in result["messages"][-1].content
+
+
 @pytest.mark.parametrize("returned_subdomain", [None, "", "other"])
 def test_add_cart_rejects_unconfirmed_menu_tenant_without_mutation(returned_subdomain):
     state = make_state(Cart(items=[]))
@@ -661,3 +695,76 @@ def test_remove_cart_rejects_zero_quantity():
     )
 
     assert result["cart"].items[0].units[0].quantity == 2
+
+
+@pytest.mark.parametrize(
+    ("cart", "expected_message"),
+    [
+        (Cart(items=[]), "Cart is empty"),
+        (
+            Cart(
+                items=[
+                    CartItem(
+                        item_id="",
+                        title="Chicken Biryani",
+                        units=[CartItemUnit(key="item-001|no_variant", quantity=1, base_price=220.0)],
+                    )
+                ]
+            ),
+            "invalid items",
+        ),
+        (
+            Cart(
+                items=[
+                    CartItem(
+                        item_id="item-001",
+                        title="Chicken Biryani",
+                        units=[CartItemUnit(key="item-001|no_variant", quantity=1, base_price=-1.0)],
+                    )
+                ]
+            ),
+            "invalid items",
+        ),
+    ],
+    ids=["empty-cart", "missing-item-identity", "invalid-price"],
+)
+def test_place_order_rejects_invalid_cart_without_checkout(cart, expected_message):
+    state = make_state(cart)
+    state.update(
+        {
+            "user_id": 77,
+            "order_confirmation_pending": True,
+            "messages": [HumanMessage(content="yes")],
+        }
+    )
+
+    with patch("src.agents.tools.cart._place_order_with_outbox") as checkout:
+        result = run_tool(state, "place_order", {}, "test-invalid-checkout")
+
+    checkout.assert_not_called()
+    assert expected_message.lower() in result["messages"][-1].content.lower()
+
+
+def test_place_order_does_not_clear_cart_without_a_valid_order_id():
+    state = make_state(make_cart(2))
+    state.update(
+        {
+            "user_id": 77,
+            "order_confirmation_pending": True,
+            "messages": [HumanMessage(content="yes")],
+        }
+    )
+
+    with patch(
+        "src.agents.tools.cart._place_order_with_outbox",
+        return_value=(
+            {"order_id": "   ", "status": "confirmed", "subtotal": 440.0},
+            2,
+        ),
+    ):
+        result = run_tool(state, "place_order", {}, "test-invalid-order-id")
+
+    assert result["cart"].items[0].units[0].quantity == 2
+    assert result.get("orderId") is None
+    assert result.get("order_history_persisted", False) is False
+    assert "your cart is still saved" in result["messages"][-1].content.lower()

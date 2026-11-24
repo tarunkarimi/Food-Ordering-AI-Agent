@@ -74,6 +74,7 @@ def _apply_result(state: dict[str, Any], result: Any) -> list[Any]:
                 "cart",
                 "orderId",
                 "order_status",
+                "order_history_persisted",
                 "order_confirmation_pending",
                 "finished",
             ):
@@ -89,6 +90,7 @@ def _apply_result(state: dict[str, Any], result: Any) -> list[Any]:
             "cart",
             "orderId",
             "order_status",
+            "order_history_persisted",
             "order_confirmation_pending",
             "finished",
         ):
@@ -193,6 +195,10 @@ def tool_node(state, config=None):
         "cart": working_state.get("cart"),
         "orderId": working_state.get("orderId"),
         "order_status": working_state.get("order_status"),
+        "order_history_persisted": working_state.get(
+            "order_history_persisted",
+            False,
+        ),
         "order_confirmation_pending": working_state.get(
             "order_confirmation_pending",
             False,

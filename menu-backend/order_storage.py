@@ -22,6 +22,7 @@ from sqlalchemy import (
     select,
     text,
 )
+from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.exc import ArgumentError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
@@ -30,6 +31,21 @@ from functools import lru_cache
 
 
 MENU_SCHEMA = "menu_backend"
+_SUPABASE_HOST_SUFFIXES = (".supabase.com", ".supabase.co")
+_SECURE_SSL_MODES = {"require", "verify-ca", "verify-full"}
+
+
+def normalize_database_url(url: str) -> str:
+    """Select psycopg and require TLS for hosted Supabase PostgreSQL URLs."""
+    parsed = make_url(url)
+    if parsed.drivername in {"postgres", "postgresql"}:
+        parsed = parsed.set(drivername="postgresql+psycopg")
+    host = (parsed.host or "").casefold()
+    if host.endswith(_SUPABASE_HOST_SUFFIXES):
+        sslmode = str(parsed.query.get("sslmode", "")).casefold()
+        if sslmode not in _SECURE_SSL_MODES:
+            parsed = parsed.update_query_dict({"sslmode": "require"})
+    return parsed.render_as_string(hide_password=False)
 
 
 class OrderBase(DeclarativeBase):
@@ -137,10 +153,7 @@ class PostgresOrderRepository:
         url = database_url or os.getenv("MENU_DATABASE_URL", "")
         if not url:
             raise RuntimeError("Menu order storage is not configured.")
-        if url.startswith("postgres://"):
-            url = "postgresql+psycopg://" + url[len("postgres://"):]
-        elif url.startswith("postgresql://"):
-            url = "postgresql+psycopg://" + url[len("postgresql://"):]
+        url = normalize_database_url(url)
         self.engine = create_engine(url, pool_pre_ping=True, pool_size=5, max_overflow=5)
         self.sessions = sessionmaker(self.engine, expire_on_commit=False)
 
@@ -299,4 +312,10 @@ def get_order_repository() -> OrderRepository:
     try:
         return PostgresOrderRepository()
     except (RuntimeError, ArgumentError) as exc:
-        raise HTTPException(status_code=503, detail="Order storage is not configured.") from exc
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Order storage is not configured. Set MENU_DATABASE_URL to "
+                "enable persisted orders."
+            ),
+        ) from exc

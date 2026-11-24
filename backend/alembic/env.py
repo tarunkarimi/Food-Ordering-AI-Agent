@@ -1,6 +1,7 @@
 """Alembic environment configuration."""
 
 import sys
+import os
 from logging.config import fileConfig
 from pathlib import Path
 
@@ -14,9 +15,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 from src.configs.config import config as app_config
 from src.db.base import Base
-from src.db.database import DATABASE_URL
-from src.db.base import Base
-from src.db.database import DATABASE_URL
+from src.db.connection_url import normalize_database_url
 from src.db.models import User
 
 # Import models here as they are introduced in later phases so Alembic can
@@ -26,6 +25,15 @@ target_metadata = Base.metadata
 
 alembic_config = context.config
 
+MIGRATION_DATABASE_URL = app_config.MIGRATION_DATABASE_URL or os.environ.get(
+    "MIGRATION_DATABASE_URL", ""
+)
+if not MIGRATION_DATABASE_URL.strip():
+    raise RuntimeError(
+        "MIGRATION_DATABASE_URL must be explicitly configured; migrations never use DATABASE_URL."
+    )
+MIGRATION_DATABASE_URL = normalize_database_url(MIGRATION_DATABASE_URL)
+
 if alembic_config.config_file_name is not None:
     fileConfig(alembic_config.config_file_name)
 
@@ -34,7 +42,7 @@ def run_migrations_offline() -> None:
     """Run migrations without creating a database connection."""
 
     context.configure(
-        url=DATABASE_URL,
+        url=MIGRATION_DATABASE_URL,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -51,7 +59,7 @@ def run_migrations_online() -> None:
         alembic_config.config_ini_section,
         {},
     )
-    configuration["sqlalchemy.url"] = DATABASE_URL
+    configuration["sqlalchemy.url"] = MIGRATION_DATABASE_URL
 
     connectable = engine_from_config(
         configuration,

@@ -57,6 +57,22 @@ def test_build_authoritative_unit_uses_menu_price():
     assert unit.variation is None
 
 
+def test_build_authoritative_unit_rejects_explicitly_unavailable_item():
+    with pytest.raises(ValueError, match="not currently available"):
+        build_authoritative_unit(
+            {
+                "id": "1",
+                "title": "Pizza",
+                "base_price": 250,
+                "variations": [],
+                "available": False,
+            },
+            "1",
+            1,
+            None,
+        )
+
+
 def test_build_authoritative_unit_uses_selected_variation_price():
     unit = build_authoritative_unit(
         {

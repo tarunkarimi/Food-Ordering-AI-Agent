@@ -4,6 +4,7 @@ from typing import Optional
 
 from src.agents.state import Cart, CartItem, CartItemUnit, ItemVariation
 from src.agents.tools.cart import _valid_price, _valid_quantity
+from src.services.ordering_intelligence import is_menu_item_available
 
 
 def build_session_config(
@@ -49,6 +50,9 @@ def build_authoritative_unit(
     variation_id: Optional[str],
 ) -> CartItemUnit:
     """Build a cart unit using authoritative menu pricing."""
+    if not is_menu_item_available(menu_item):
+        raise ValueError("That menu item is not currently available.")
+
     authoritative_price = menu_item.get("base_price")
 
     if not _valid_quantity(quantity):

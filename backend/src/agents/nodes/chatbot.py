@@ -132,10 +132,7 @@ def _load_persistent_ordering_context(
                 subdomain=state.get("subdomain"),
             )
     except Exception:
-        logger.exception(
-            "Unable to load persistent ordering intelligence for user %s.",
-            user_id,
-        )
+        logger.error("Unable to load persistent ordering intelligence.")
         return {}
 
 
@@ -199,10 +196,7 @@ def _capture_persistent_ai_memory(
             db.commit()
 
     except Exception:
-        logger.exception(
-            "Unable to persist conversational AI memory for user %s.",
-            user_id,
-        )
+        logger.error("Unable to persist conversational AI memory.")
 
 
 def chatbot(
@@ -261,10 +255,7 @@ def chatbot(
                     user_id=int(user_id),
                 )
         except Exception:
-            logger.exception(
-                "Unable to load conversational AI memory for user %s.",
-                user_id,
-            )
+            logger.error("Unable to load conversational AI memory.")
 
     model_messages = [
         formatted_system_instruction,
@@ -371,6 +362,10 @@ def chatbot(
         "cart": current_cart,
         "orderId": state.get("orderId"),
         "order_status": state.get("order_status"),
+        "order_history_persisted": state.get(
+            "order_history_persisted",
+            False,
+        ),
         "order_confirmation_pending": state.get(
             "order_confirmation_pending",
             False,

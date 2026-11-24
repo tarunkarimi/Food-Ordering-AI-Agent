@@ -1,5 +1,8 @@
 name: Full Stack CI
 
+permissions:
+  contents: read
+
 on:
   push:
     branches:
@@ -25,7 +28,7 @@ jobs:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: food_ordering_ci
         ports:
-          - 5432:5432
+          - 127.0.0.1:5432:5432
         options: >-
           --health-cmd "pg_isready -U postgres -d food_ordering_ci"
           --health-interval 10s
@@ -42,7 +45,8 @@ jobs:
       MENU_TEST_DATABASE_NAME: "food_ordering_ci"
       MENU_TEST_DATABASE_CONFIRMATION: "I_ACKNOWLEDGE_TEST_DATABASE:food_ordering_ci"
       GOOGLE_API_KEY: "ci-test-key"
-      DATABASE_URL: "postgresql+psycopg://postgres:postgres@localhost:5432/food_ordering_ci"
+      DATABASE_URL: "postgresql+psycopg://ci-config.invalid:5432/runtime_unused"
+      MIGRATION_DATABASE_URL: "postgresql+psycopg://postgres:postgres@localhost:5432/food_ordering_ci"
       TEST_DATABASE_URL: "postgresql+psycopg://postgres:postgres@localhost:5432/food_ordering_ci"
       TEST_DATABASE_NAME: "food_ordering_ci"
       TEST_DATABASE_CONFIRMATION: "I_ACKNOWLEDGE_TEST_DATABASE:food_ordering_ci"
@@ -68,12 +72,19 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --dev
 
+      - name: Verify disposable PostgreSQL identity
+        run: uv run python ../scripts/verify_ci_postgres.py MIGRATION_DATABASE_URL
+
       - name: Apply database migrations
         run: uv run alembic upgrade head
 
+      - name: Verify disposable PostgreSQL identity for menu migrations
+        working-directory: menu-backend
+        run: uv run --project ../backend python ../scripts/verify_ci_postgres.py MENU_MIGRATION_DATABASE_URL
+
       - name: Apply menu-backend migrations for lifecycle integration
         working-directory: menu-backend
-        run: uv run --project ../backend python -m alembic upgrade head
+        run: uv run --project ../backend alembic upgrade head
 
       - name: Compile backend
         run: uv run python -m compileall src -q
@@ -177,7 +188,7 @@ jobs:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: food_ordering_ci
         ports:
-          - 5432:5432
+          - 127.0.0.1:5432:5432
         options: >-
           --health-cmd "pg_isready -U postgres -d food_ordering_ci"
           --health-interval 10s
@@ -208,11 +219,14 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt pytest httpx
 
+      - name: Verify disposable PostgreSQL identity
+        run: python ../scripts/verify_ci_postgres.py MENU_MIGRATION_DATABASE_URL
+
       - name: Compile menu backend
         run: python -m compileall main.py -q
 
       - name: Apply menu-backend migrations
-        run: python -m alembic upgrade head
+        run: alembic upgrade head
 
       - name: Run menu backend tests
         run: python -m pytest -q --ignore=test_order_storage_integration.py

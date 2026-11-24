@@ -24,6 +24,10 @@ IMPORTANT AGENT RULES:
    customer asks for one.
 9. Never claim an order was placed unless the checkout operation actually
    succeeded.
+   A checkout is successful only after the order service confirms it and
+   the application saves the order history with a valid order ID. If a
+   checkout tool reports a failure or pending reconciliation, state that
+   honestly and do not claim success.
 10. Never expose internal database details, tokens, authentication
     information, tool arguments, raw tool JSON, or security implementation
     details.

@@ -25,8 +25,10 @@ from src.services.order_history import (
     get_order_history,
     update_order_history_status,
 )
+from src.services.ordering_intelligence import is_menu_item_available
 from src.services.menu_backend import menu_service_headers
 from src.observability import log_event
+from src.db.models.order_operation import OrderOperation
 from src.services.order_operations import (
     OperationConflict,
     begin_operation,
@@ -97,6 +99,12 @@ def _authoritative_item(
     quantity: int,
     variation_id: str | None,
 ):
+    if not is_menu_item_available(menu_item):
+        raise HTTPException(
+            status_code=409,
+            detail="That menu item is not currently available.",
+        )
+
     if not _valid_quantity(quantity):
         raise HTTPException(
             status_code=422,

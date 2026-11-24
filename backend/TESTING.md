@@ -4,9 +4,9 @@
 
 The application settings in `src/configs/config.py` read `DATABASE_URL` from the process environment first, then `backend/.env`. `src/db/database.py` normalizes PostgreSQL URL schemes and creates the application SQLAlchemy engine and `SessionLocal` from that setting. `get_db()` opens a `SessionLocal` session and closes it after the request; it does not roll back committed changes.
 
-When Python is running under pytest, `src/db/database.py` instead requires and validates all three explicit settings below, then binds the test engine and `SessionLocal` to `TEST_DATABASE_URL`. It never falls back to `DATABASE_URL`. Outside CI, it rejects a target that has the same host, port, and database name as the configured application database. CI may share the application's configured URL only when the database name contains a `ci` segment, as it points at the workflow's dedicated service. The check parses URL metadata only; it does not connect to PostgreSQL or verify the remote server's identity. The target URL's database name must exactly match `TEST_DATABASE_NAME`, and that name must contain a `test`, `ci`, or `e2e` segment. The confirmation value must exactly match the name.
+When Python is running under pytest, `src/db/database.py` requires and validates all three explicit test settings, then binds the test engine and `SessionLocal` to `TEST_DATABASE_URL`. It never falls back to `DATABASE_URL`. Test URLs must use `localhost` or a loopback IP literal; remote DNS names, Supabase hosts, and remote IP addresses are rejected without DNS resolution, including when `CI=true` is set locally. It also rejects database names containing a `prod`, `production`, or `live` segment. The target URL's database name must exactly match `TEST_DATABASE_NAME`, and that name must contain a `test`, `ci`, or `e2e` segment. The confirmation value must exactly match the name.
 
-CI already starts a dedicated PostgreSQL service with database name `food_ordering_ci`; both backend workflows now designate it explicitly and permit the CI-only same-target case. No local test database was verified during this work. Do not treat the database referenced by a local `.env` as a test database based on its presence or name alone.
+CI starts a dedicated PostgreSQL service with database name `food_ordering_ci`; workflows set explicit test and migration URLs for that service and use an inert placeholder for runtime `DATABASE_URL`. The local test guard remains loopback-only and does not contain a developer-enabled CI bypass. No local test database was verified during this work. Do not treat the database referenced by a local `.env` as a test database based on its presence or name alone.
 
 ## Safe commands
 
@@ -70,13 +70,22 @@ and database-independent:
 uv run pytest tests/test_recommendations.py tests/test_recommendation_ranking.py -q
 ```
 
-The suite does not create a database fixture, wrap each test in a rollback, or consistently clean up rows. Many tests commit users, sessions, carts, preferences, and order history. Do not run database-backed tests against a shared, development, staging, or production database. This guard checks explicit target configuration and naming; it cannot prove ownership or isolation of the remote database without an out-of-band verification by its owner.
+The suite does not create a database fixture, wrap each test in a rollback, or consistently clean up rows. Many tests commit users, sessions, carts, preferences, and order history. Do not run database-backed tests against a shared, development, staging, or production database. The test guard requires a literal loopback target and does not resolve hostnames; it cannot prove which local process is listening on that port, so verify the local service identity before running integration tests.
 
-The shared `tests/conftest.py` replaces route-level OTP delivery with a no-op for every pytest test. Tests that call non-test menu or order services must still mock those calls; database isolation alone does not isolate external systems.
+The shared `tests/conftest.py` replaces route-level OTP delivery with a no-op for every pytest test. OTP codes are never written to logs, including in local development; configure a mail or SMS provider for delivery. Tests that call non-test menu or order services must still mock those calls; database isolation alone does not isolate external systems.
 
-The Full Stack CI workflow runs the authenticated order-cancellation persistence regression only after migrations. Its database-independent order-status and observability unit tests run in the same job. The frontend job runs the mocked Chromium E2E suite after lint/build; each test intercepts API requests and blocks unexpected external requests. The menu-backend job installs pytest/httpx and runs its in-memory API tests.
+Menu PostgreSQL persistence integration tests are CI-only and additionally
+require a loopback database host. The menu migration URL, when set, must point
+to the same database as `MENU_DATABASE_URL`. The GitHub Actions service is the
+supported disposable target; do not run these tests against any remote host.
 
-Menu-backend order status and cancellation lookups require a `subdomain` query parameter. Backend callers send the order's stored tenant identity; mismatches return 404 before cancellation can mutate the in-memory order.
+The Full Stack CI workflow runs authenticated checkout and cancellation persistence regressions after migrations. Its database-independent order-status, OTP-delivery, and observability unit tests run in the same job. The frontend job runs the mocked Chromium E2E suite after lint/build; each test intercepts API requests and blocks unexpected external requests. The menu-backend CI job uses its own ephemeral PostgreSQL 16 service, applies the menu-owned schema migration, runs mocked API tests, then runs PostgreSQL persistence, ownership, cancellation, idempotency, and concurrency regressions. The backend CI job separately migrates both schemas before its in-process order lifecycle regression. Application replicas do not run migrations at startup.
+
+The menu backend protects order creation, status, and cancellation endpoints with the internal `X-Menu-Service-Key` header. Backend local runs must set `MENU_SERVICE_API_KEY` to the same synthetic value configured for `menu-backend`; CI supplies a test-only value. Configure the same high-entropy value (at least 32 characters) in the secret manager for both deployed services. Do not print or commit the key. Public menu and health endpoints do not require it.
+
+Menu-backend order status and cancellation lookups require both the exact `subdomain` and authenticated `user_id`; mismatches return 404 before state is read or changed. Checkout requires the service key, owner, tenant, and a stable `Idempotency-Key`; the PostgreSQL unique constraint scopes that key to owner and tenant. Repeated cancellation is idempotent.
+
+The menu migration is independent from backend Alembic history. Run it once from `menu-backend/` as a controlled release step using `MENU_MIGRATION_DATABASE_URL`; application startup never runs migrations. The current Render free-service configuration has no configured one-shot release runner, so production rollout must provide a separate migration runner before enabling the new menu backend version.
 
 ## Recommendation ingredient-data limitation
 
@@ -102,4 +111,4 @@ Only after that confirmation and after securely supplying the variables above, t
 .\.venv\Scripts\python.exe scripts/provision_e2e_user.py
 ```
 
-The provisioning script does not run migrations. Alembic uses the application `DATABASE_URL`; do not run migration commands for testing until the test target has been independently confirmed and `DATABASE_URL` has been safely directed to that target for the migration process.
+The provisioning script does not run migrations. Main-backend Alembic requires an explicit `MIGRATION_DATABASE_URL`; it never falls back to `DATABASE_URL`. Menu Alembic likewise requires `MENU_MIGRATION_DATABASE_URL` and never falls back to `MENU_DATABASE_URL`. For local or test migrations, inject these values only after independently confirming the target is disposable and migrated schema changes are intended.

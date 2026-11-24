@@ -5,7 +5,9 @@ it against a local or application database.
 """
 
 from concurrent.futures import ThreadPoolExecutor
+import ipaddress
 import os
+import re
 from uuid import uuid4
 
 import pytest
@@ -32,17 +34,35 @@ def order_context():
         or not any(segment in expected_name.casefold().replace("-", "_").split("_") for segment in ("test", "ci", "e2e"))
     ):
         pytest.fail("A matching explicit menu test-database designation is required.")
+    if re.search(r"(?:^|[_-])(prod|production|live)(?:[_-]|$)", expected_name, re.IGNORECASE):
+        pytest.fail("Production or live database names cannot be used for integration tests.")
     target = os.getenv("MENU_DATABASE_URL", "")
     try:
         parsed = make_url(target)
-    except Exception as exc:
+    except Exception:
         pytest.fail("A valid explicitly designated menu test database is required.")
+    try:
+        is_loopback = parsed.host.casefold() == "localhost" or ipaddress.ip_address(parsed.host).is_loopback
+    except ValueError:
+        is_loopback = False
     if (
         parsed.get_backend_name() not in {"postgres", "postgresql"}
         or not parsed.host
         or parsed.database != expected_name
+        or not is_loopback
     ):
-        pytest.fail("Menu integration tests may only use the designated CI PostgreSQL database.")
+        pytest.fail("Menu integration tests may only use a local designated CI PostgreSQL database.")
+    migration_target = os.getenv("MENU_MIGRATION_DATABASE_URL", "")
+    if migration_target:
+        try:
+            migration = make_url(migration_target)
+            same_target = (
+                migration.host.casefold(), migration.port or 5432, migration.database
+            ) == (parsed.host.casefold(), parsed.port or 5432, parsed.database)
+        except Exception:
+            same_target = False
+        if not same_target:
+            pytest.fail("Menu migrations and integration tests must use the same designated CI database.")
     user_id = f"phase21-{uuid4().hex}"
     repository = PostgresOrderRepository()
     yield repository, user_id

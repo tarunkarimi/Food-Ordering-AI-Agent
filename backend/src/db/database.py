@@ -12,29 +12,21 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from src.configs.config import config
+from src.db.connection_url import normalize_database_url
 from src.db_test_safety import resolve_test_database_url
 
 
-def _normalize_database_url(url: str) -> str:
-    if url.startswith("postgres://"):
-        return "postgresql+psycopg://" + url[len("postgres://") :]
-
-    if url.startswith("postgresql://"):
-        return "postgresql+psycopg://" + url[len("postgresql://") :]
-
-    return url
-
-
 if "pytest" in sys.modules:
-    DATABASE_URL = resolve_test_database_url(
-        test_database_url=os.environ.get("TEST_DATABASE_URL"),
-        test_database_name=os.environ.get("TEST_DATABASE_NAME"),
-        confirmation=os.environ.get("TEST_DATABASE_CONFIRMATION"),
-        application_database_url=config.DATABASE_URL,
-        ci_environment=os.environ.get("CI", "").casefold() == "true",
+    DATABASE_URL = normalize_database_url(
+        resolve_test_database_url(
+            test_database_url=os.environ.get("TEST_DATABASE_URL"),
+            test_database_name=os.environ.get("TEST_DATABASE_NAME"),
+            confirmation=os.environ.get("TEST_DATABASE_CONFIRMATION"),
+            application_database_url=config.DATABASE_URL,
+        )
     )
 else:
-    DATABASE_URL = _normalize_database_url(config.DATABASE_URL)
+    DATABASE_URL = normalize_database_url(config.DATABASE_URL)
 
 
 engine = create_engine(

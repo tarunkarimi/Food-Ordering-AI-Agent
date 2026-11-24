@@ -1,11 +1,17 @@
 import os
 from logging.config import fileConfig
+from pathlib import Path
 
 from alembic import context
+from dotenv import load_dotenv
 from sqlalchemy import engine_from_config, pool
 
 from migration_config import configure_migration_context
-from order_storage import OrderBase
+from order_storage import OrderBase, normalize_database_url
+
+# The CLI migration path uses the menu service's ignored local .env just like
+# the application, while explicit process/secret-manager values take priority.
+load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
 
 config = context.config
 if config.config_file_name:
@@ -13,14 +19,12 @@ if config.config_file_name:
 
 
 def _database_url() -> str:
-    url = os.getenv("MENU_MIGRATION_DATABASE_URL") or os.getenv("MENU_DATABASE_URL", "")
+    url = os.getenv("MENU_MIGRATION_DATABASE_URL", "")
     if not url:
-        raise RuntimeError("MENU_DATABASE_URL is required for menu migrations.")
-    if url.startswith("postgres://"):
-        return "postgresql+psycopg://" + url[len("postgres://"):]
-    if url.startswith("postgresql://"):
-        return "postgresql+psycopg://" + url[len("postgresql://"):]
-    return url
+        raise RuntimeError(
+            "MENU_MIGRATION_DATABASE_URL must be explicitly configured; migrations never use MENU_DATABASE_URL."
+        )
+    return normalize_database_url(url)
 
 
 target_metadata = OrderBase.metadata
